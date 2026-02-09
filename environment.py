@@ -89,7 +89,8 @@ class NetworkSlicingEnv:
                 slice_name,
                 slice_user_ids,
                 self.channel_model,
-                self.random_state
+                self.random_state,
+                env=self
             )
             
             # Record user-to-slice mapping
@@ -98,6 +99,12 @@ class NetworkSlicingEnv:
             
             start_idx = end_idx
             print(f"{slice_name} slice: {len(slice_user_ids)} users")
+
+    def _generate_state(self):
+        """
+        Generates an initial state (assumed to be 0 packets across 3 slices).
+        """
+        return np.array([0,0,0])
 
     def _random_slice_assignment(self):
         """
@@ -136,7 +143,23 @@ class NetworkSlicingEnv:
         state = self._generate_state()
         
         return state
+
+    # def reset(self):
+    #     self.current_step = 0
+    #     self.global_slot = 0
+
+    #     # Reset slice statistics
+    #     for slice_obj in self.slices.values():
+    #         slice_obj.reset_statistics()
         
+    #     state = []
+    #     for slice_name in Config.SLICE_NAMES:
+    #         state.append(0.0)
+    #         state.append(1.0/3.0)
+    #         state.append(1.0)
+        
+    #     return np.array(state, dtype=np.float32)
+
     def step(self, action):
         """
         Execute one decision step (400 slots simulation)
@@ -147,22 +170,20 @@ class NetworkSlicingEnv:
         Returns:
             tuple: (next_state, reward, done, info)
         """
+
         # Convert action to bandwidth in Hz
         bandwidth_allocation = self._process_action(action)
         
         # Allocate resources to slices
         self._allocate_resources(bandwidth_allocation)
 
-        # DEBUG: check action
-        # print("Action After Setting:")
-        # for slice_name in Config.SLICE_NAMES:
-        #     slice_obj = self.slices[slice_name]
-        #     print(f"{slice_obj.slice_name} allocation bandwidth: {slice_obj. bandwidth}")            
+         # Reset slice statistics for this step
+        for slice_obj in self.slices.values():
+            slice_obj.reset_statistics()
 
         # Clear all queues at start of each step
-        # for slice_name in Config.SLICE_NAMES:
-        #     slice_obj = self.slices[slice_name]
-        #     slice_obj.scheduler.queue.clear()
+        # for slice_obj in self.slices.values():
+        #     slice_obj.scheduler.clear_all_queues()
         #     slice_obj.scheduler.current_packet = None
 
         # Reset step statistics
@@ -183,72 +204,70 @@ class NetworkSlicingEnv:
             all_packets[slice_name] = packets
 
             state.append(len(packets))
-
-            # if len(packets) > 0:
-            #     # Show first 3 packets
-            #     print(f"    First 3 packets:")
-            #     for i, pkt in enumerate(packets[:3]):
-            #         print(f"      [{i}] arrival={pkt.arrival_time}, deadline={pkt.deadline}, "
-            #             f"user={pkt.user_id}, size={pkt.size}")
-                
-            #     # Show last 3 packets
-            #     if len(packets) > 3:
-            #         print(f"    Last 3 packets:")
-            #         for i, pkt in enumerate(packets[-3:], len(packets)-3):
-            #             print(f"      [{i}] arrival={pkt.arrival_time}, deadline={pkt.deadline}, "
-            #                 f"user={pkt.user_id}, size={pkt.size}")
             
             # Record packets for rate SLA checking
             for packet in packets:
                 self.user_packets_in_step[packet.user_id].append(packet)
-        
-        # DEBUG: checck traffic
-        # video_users = [uid for uid, s in self.user_to_slice.items() if s == 'Video']
-        # for user_id in video_users:
-        #     pkt_count = len(self.user_packets_in_step[user_id])
-        #     if pkt_count > 0 or user_id == video_users[0]:  # Show first user even if 0
-        #         print(f"  User {user_id}: {pkt_count} packets")
-
-        # DEBUG: checck traffic
-        # for slice_name, packets in all_packets.items():
-        #     if len(packets) == 0:
-        #         print(f"{slice_name}: 0 packets")
-        #         continue
-
-        #     packets_sorted = sorted(packets, key=lambda p: p.arrival_time)
-
-        #     first_pkt = packets_sorted[0]
-        #     last_pkt = packets_sorted[-1]
-
-        #     print(
-        #         f"{slice_name}: "
-        #         f"total={len(packets)}, "
-        #         f"first(arrival={first_pkt.arrival_time}, size={first_pkt.original_size}, user={first_pkt.user_id}), "
-        #         f"last(arrival={last_pkt.arrival_time}, size={last_pkt.original_size}, user={last_pkt.user_id})"
-        #     )
 
         # Simulate 400 slots
         self._simulate_slots(all_packets, start_slot)
         
+        # for slice_name in Config.SLICE_NAMES:
+        #     slice_obj = self.slices[slice_name]
+        #     all_quenue_length = slice_obj.scheduler.get_queue_length()
+        #     print(f"{slice_name} queue length: {all_quenue_length}")
+
         # Check QoS and calculate metrics
         self._check_qos()
         
         # Calculate metrics
         metrics = self._calculate_metrics(bandwidth_allocation)
         
+        # state = self._build_rich_state(metrics, bandwidth_allocation)
+
         # Calculate reward
         reward = self._calculate_reward(metrics['utility'])
-                
+
         # Update step counter
         self.current_step += 1
         self.global_slot += Config.SLOTS_PER_STEP
 
-        done = False  # Continuous task
+        term, trunc = False, False  # Continuous task
         
         info = metrics
+
+        print(f"Step {self.current_step}:")
+        print(f"  SE: {metrics['spectrum_efficiency']:.6f}")
+        print(f"  SSR: {metrics['ssr']}")
+        print(f"  Utility: {metrics['utility']:.6f}")
+        print(f"  Reward: {reward:.6f}")
+        print(f"  Action: {action}")
         
-        return state, reward, done, info
-    
+        return state, reward, term, trunc, info
+
+    def _build_rich_state(self, metrics, bandwidth_allocation):
+        """
+        构建包含更多信息的state
+        """
+        state = []
+        
+        for slice_name in Config.SLICE_NAMES:
+            slice_obj = self.slices[slice_name]
+            
+            # 1. 当前队列长度（归一化）
+            queue_len = len(slice_obj.scheduler.queue)
+            state.append(queue_len / 100.0)  # 归一化到0-1
+            
+            # 2. 当前带宽分配比例
+            bw_ratio = bandwidth_allocation[slice_name] / Config.TOTAL_BANDWIDTH
+            state.append(bw_ratio)
+            
+            # 3. 上一步的SSR
+            ssr = metrics['ssr'][slice_name]
+            state.append(ssr)
+        
+        return np.array(state, dtype=np.float32)
+
     def _process_action(self, action):
         """
         Process action to ensure valid bandwidth allocation
@@ -305,39 +324,16 @@ class NetworkSlicingEnv:
         
         for slice_name, packets in all_packets.items():
             for packet in packets:
-                if packet.arrival_time < Config.SLOTS_PER_STEP:
+                if start_slot <= packet.arrival_time < end_slot:
                     arrival_schedule[packet.arrival_time].append(packet)
-
-        # DEBUG: check slot
-        # for i in range(Config.SLOTS_PER_STEP):
-        #     if i < 10 and len(arrival_schedule[i]) > 0:
-        #         print(f"\n  Slot {i} (DETAILED):")
-        #         print(f"    Total: {len(arrival_schedule[i])} packets")
-                
-        #         slice_counts = {'VoLTE': 0, 'Video': 0, 'URLLC': 0}
-        #         for pkt in arrival_schedule[i]:
-        #             slice_counts[pkt.slice_name] += 1
-                
-        #         for slice_name, count in slice_counts.items():
-        #             percentage = count / len(arrival_schedule[i]) * 100
-        #             print(f"    {slice_name}: {count:3d} packets ({percentage:5.1f}%)")
-            # print(f"slot {i}: {len(arrival_schedule[i])}")
 
         # Simulate each slot
         for slot in range(start_slot, end_slot):
-        # for slot in range(25):
-
             # Handle packet arrivals
             for packet in arrival_schedule[slot]:
                 slice_obj = self.slices[packet.slice_name]
                 slice_obj.enqueue_packet(packet)
             
-            # DEBUG: check queue
-            # for slice_name in Config.SLICE_NAMES:
-            #     slice_obj = self.slices[slice_name]
-            #     print(f"slice {slice_name}: {len(slice_obj.scheduler.queue)}")
-            # print()
-
             # Transmit packets from each slice
             for slice_name in Config.SLICE_NAMES:
                 self._transmit_slice(slice_name, slot)
@@ -391,49 +387,16 @@ class NetworkSlicingEnv:
         """
         Check QoS for all packets with per-slice aggregate rate checking
         """
-        # ============================================
-        # Step 1: Calculate per-slice aggregate transmitted bits
-        # ============================================
-        slice_transmitted_bits = {
-            'VoLTE': 0,
-            'Video': 0,
-            'URLLC': 0
-        }
+        user_rate_satisfied = {}
         
         for user_id in range(self.n_users):
             slice_name = self.user_to_slice[user_id]
-            slice_transmitted_bits[slice_name] += self.user_transmitted_bits[user_id]
-                
-        # ============================================
-        # Step 2: Check per-slice aggregate rate SLA
-        # ============================================
-        slice_rate_satisfied = {}
-        
-        for slice_name in Config.SLICE_NAMES:
-            total_bits = slice_transmitted_bits[slice_name]
-            aggregate_rate = total_bits / Config.STEP_DURATION  # bps
+            
+            bits_transmitted = self.user_transmitted_bits[user_id]
+            user_rate = bits_transmitted / Config.STEP_DURATION  # bps
             required_rate = Config.get_rate_sla(slice_name)
             
-            slice_rate_satisfied[slice_name] = (aggregate_rate >= required_rate)
-            
-            # DEBUG output
-            # if self.current_step <= 2:
-            #     print(f"\n  {slice_name}:")
-            #     print(f"    Transmitted bits: {total_bits:>12,.0f} bits")
-            #     print(f"    Aggregate rate:   {aggregate_rate/1e6:>10.2f} Mbps")
-            #     print(f"    Required rate:    {required_rate/1e6:>10.2f} Mbps")
-            #     print(f"    Bandwidth alloc:  {self.slices[slice_name].bandwidth/1e6:>10.2f} MHz")
-            #     print(f"    Status: {'✓ PASS' if slice_rate_satisfied[slice_name] else '✗ FAIL'}")
-        
-        # ============================================
-        # Step 3: Check each user's packets
-        # ============================================
-        # Count for debugging
-        debug_counts = {
-            'VoLTE': {'total': 0, 'transmitted': 0, 'latency_pass': 0, 'latency_fail': 0, 'not_transmitted': 0},
-            'Video': {'total': 0, 'transmitted': 0, 'latency_pass': 0, 'latency_fail': 0, 'not_transmitted': 0},
-            'URLLC': {'total': 0, 'transmitted': 0, 'latency_pass': 0, 'latency_fail': 0, 'not_transmitted': 0}
-        }
+            user_rate_satisfied[user_id] = (user_rate >= required_rate)
         
         for user_id in range(self.n_users):
             packets = self.user_packets_in_step[user_id]
@@ -443,47 +406,22 @@ class NetworkSlicingEnv:
             slice_name = self.user_to_slice[user_id]
             slice_obj = self.slices[slice_name]
             
-            rate_satisfied = slice_rate_satisfied[slice_name]
+            rate_satisfied = user_rate_satisfied[user_id]
             
             for packet in packets:
-                debug_counts[slice_name]['total'] += 1
-                
                 x_n_k = 0
                 
                 if not rate_satisfied:
                     x_n_k = 0
                 else:
                     if packet.transmission_complete is not None:
-                        debug_counts[slice_name]['transmitted'] += 1
                         latency_satisfied = packet.is_deadline_met()
-                        if latency_satisfied:
-                            debug_counts[slice_name]['latency_pass'] += 1
-                            x_n_k = 1
-                        else:
-                            debug_counts[slice_name]['latency_fail'] += 1
-                            x_n_k = 0
+                        x_n_k = 1 if latency_satisfied else 0
                     else:
-                        debug_counts[slice_name]['not_transmitted'] += 1
                         x_n_k = 0
                 
                 if x_n_k == 1:
                     slice_obj.total_successful_packets += 1
-        
-        # ============================================
-        # DEBUG: Print packet statistics
-        # ============================================
-        # if self.current_step <= 2:
-        #     for slice_name in Config.SLICE_NAMES:
-        #         counts = debug_counts[slice_name]
-        #         print(f"\n  {slice_name}:")
-        #         print(f"    Total packets:       {counts['total']:>6}")
-        #         print(f"    Transmitted:         {counts['transmitted']:>6}")
-        #         print(f"    Not transmitted:     {counts['not_transmitted']:>6}")
-        #         print(f"    Latency pass:        {counts['latency_pass']:>6}")
-        #         print(f"    Latency fail:        {counts['latency_fail']:>6}")
-        #         if counts['total'] > 0:
-        #             success_rate = counts['latency_pass'] / counts['total']
-        #             print(f"    Success rate:        {success_rate:>6.1%}")
 
     def _calculate_metrics(self, bandwidth_allocation):
         """
@@ -510,7 +448,7 @@ class NetworkSlicingEnv:
         ssrs = {}
         for slice_name in Config.SLICE_NAMES:
             ssrs[slice_name] = self.slices[slice_name].get_ssr()
-        
+
         # Calculate utility
         utility = Config.ALPHA * spectrum_efficiency
         for i, slice_name in enumerate(Config.SLICE_NAMES):
@@ -549,16 +487,60 @@ class NetworkSlicingEnv:
             float: Shaped reward
         """
         # Calculate growing threshold
+
+        #  =========== Reward Test 1 =============
+        # gamma_t = min(
+        #     Config.GAMMA_MIN + Config.GAMMA_GROWTH_RATE * self.current_step,
+        #     Config.GAMMA_MAX
+        # )
+        
+        # if utility < gamma_t:
+        #     reward = 0.0
+        # elif gamma_t <= utility < Config.GAMMA_MAX:
+        #     reward = 1.0
+        # else:
+        #     reward = 1.0 + (utility - Config.GAMMA_MAX) / 2.0
+        
+        # return reward
+    
+        #  =========== Reward Test 2 =============
+
         gamma_t = min(
             Config.GAMMA_MIN + Config.GAMMA_GROWTH_RATE * self.current_step,
             Config.GAMMA_MAX
         )
-        
+
         if utility < gamma_t:
-            reward = 0.0
-        elif gamma_t <= utility < Config.GAMMA_MAX:
-            reward = 1.0
+            reward = utility * 0.1  # Weak signal
         else:
             reward = 1.0 + (utility - Config.GAMMA_MAX) / 2.0
+
+        reward = reward * 10
+
+        return reward
+    
+        #  =========== Reward Test =============
+        ssrs = [self.slices[s].get_ssr() for s in Config.SLICE_NAMES]
+        ssr_volte, ssr_video, ssr_urllc = ssrs
+        
+        reward = 0
+        
+        if ssr_volte > 0.90:
+            reward += 30
+        else:
+            reward += ssr_volte * 30
+        
+        if ssr_video > 0.90:
+            reward += 30
+        else:
+            reward += ssr_video * 30
+        
+        if ssr_urllc > 0.05:
+            reward += 40
+        else:
+            reward += ssr_urllc * 800
+        
+        if ssr_volte > 0.90 and ssr_video > 0.90 and ssr_urllc > 0.05:
+            reward += 50
         
         return reward

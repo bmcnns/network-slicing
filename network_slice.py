@@ -8,7 +8,7 @@ class NetworkSlice:
     Represents a network slice (VoLTE, Video, or URLLC)
     """
     
-    def __init__(self, slice_name, user_ids, channel_model, random_state=None):
+    def __init__(self, slice_name, user_ids, channel_model, random_state=None, env=None):
         """
         Initialize network slice
         
@@ -64,13 +64,6 @@ class NetworkSlice:
         
         # Sort by arrival time
         all_packets.sort(key=lambda p: p.arrival_time)
-
-        # if self.slice_name == 'Video':
-        #     print(f"\n  Video traffic generated:")
-        #     print(f"    Total packets: {len(all_packets)}")
-        #     if len(packets) > 0:
-        #         print(f"    First packet: arrival={packets[0].arrival_time}, size={packets[0].size}")
-        #         print(f"    Last packet: arrival={packets[-1].arrival_time}, size={packets[-1].size}")
 
         return all_packets
     

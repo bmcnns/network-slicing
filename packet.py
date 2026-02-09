@@ -1,5 +1,3 @@
-
-
 class Packet:
     """
     Represents a data packet with QoS requirements
