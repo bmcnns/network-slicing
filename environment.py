@@ -144,22 +144,6 @@ class NetworkSlicingEnv:
         
         return state
 
-    # def reset(self):
-    #     self.current_step = 0
-    #     self.global_slot = 0
-
-    #     # Reset slice statistics
-    #     for slice_obj in self.slices.values():
-    #         slice_obj.reset_statistics()
-        
-    #     state = []
-    #     for slice_name in Config.SLICE_NAMES:
-    #         state.append(0.0)
-    #         state.append(1.0/3.0)
-    #         state.append(1.0)
-        
-    #     return np.array(state, dtype=np.float32)
-
     def step(self, action):
         """
         Execute one decision step (400 slots simulation)
@@ -244,29 +228,6 @@ class NetworkSlicingEnv:
         print(f"  Action: {action}")
         
         return state, reward, term, trunc, info
-
-    def _build_rich_state(self, metrics, bandwidth_allocation):
-        """
-        构建包含更多信息的state
-        """
-        state = []
-        
-        for slice_name in Config.SLICE_NAMES:
-            slice_obj = self.slices[slice_name]
-            
-            # 1. 当前队列长度（归一化）
-            queue_len = len(slice_obj.scheduler.queue)
-            state.append(queue_len / 100.0)  # 归一化到0-1
-            
-            # 2. 当前带宽分配比例
-            bw_ratio = bandwidth_allocation[slice_name] / Config.TOTAL_BANDWIDTH
-            state.append(bw_ratio)
-            
-            # 3. 上一步的SSR
-            ssr = metrics['ssr'][slice_name]
-            state.append(ssr)
-        
-        return np.array(state, dtype=np.float32)
 
     def _process_action(self, action):
         """
