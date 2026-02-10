@@ -100,3 +100,12 @@ class NetworkSlice:
         self.total_arrived_packets = 0
         self.total_successful_packets = 0
         self.dropped_packets = 0
+
+    def get_drop_statistics(self):
+        """
+        Get drop statistics from scheduler.
+        
+        Returns:
+            dict: Drop statistics from the scheduler
+        """
+        return self.scheduler.get_drop_statistics()

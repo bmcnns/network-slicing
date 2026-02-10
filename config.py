@@ -108,6 +108,12 @@ class Config:
     QUEUE_DISCIPLINE = 'FIFO'  # First In First Out
     
     # ============================================
+    # Timeout Management
+    # ============================================
+    TIMEOUT_CHECK_INTERVAL = 10 
+    DEADLINE_TOLERANCE = 5
+
+    # ============================================
     # Scheduler
     # ============================================
     SCHEDULER_TYPE = 'round_robin'

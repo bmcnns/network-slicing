@@ -290,12 +290,20 @@ class NetworkSlicingEnv:
 
         # Simulate each slot
         for slot in range(start_slot, end_slot):
-            # Handle packet arrivals
+            # Step 1: Handle packet arrivals
             for packet in arrival_schedule[slot]:
                 slice_obj = self.slices[packet.slice_name]
                 slice_obj.enqueue_packet(packet)
             
-            # Transmit packets from each slice
+            # Step 2: Periodic timeout check
+            if slot % Config.TIMEOUT_CHECK_INTERVAL == 0:
+                for slice_name in Config.SLICE_NAMES:
+                    slice_obj = self.slices[slice_name]
+                    dropped_packets = slice_obj.scheduler.check_and_drop_expired(slot)
+                    # Update dropped packet count
+                    slice_obj.dropped_packets += len(dropped_packets)
+
+            #  Step 3: Transmit packets from each slice
             for slice_name in Config.SLICE_NAMES:
                 self._transmit_slice(slice_name, slot)
 
@@ -311,7 +319,10 @@ class NetworkSlicingEnv:
         scheduler = slice_obj.scheduler
         
         # Get next packet to transmit
-        packet = scheduler.get_next_packet()
+        packet, dropped_packets = scheduler.get_next_packet(current_slot=slot)
+
+        slice_obj.dropped_packets += len(dropped_packets)
+
         if packet is None:
             return  # No packets to transmit
 
