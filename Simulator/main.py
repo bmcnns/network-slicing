@@ -1,7 +1,7 @@
 import numpy as np
-from environment import NetworkSlicingEnv
-from metrics import MetricsTracker
-from config import Config
+from Simulator.environment import NetworkSlicingEnv
+from Simulator.metrics import MetricsTracker
+from Simulator.config import Config
 
 def test_random_policy(n_steps=10):
     """

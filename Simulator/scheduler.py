@@ -1,4 +1,4 @@
-from config import Config
+from Simulator.config import Config
 
 class RoundRobinScheduler:
     """

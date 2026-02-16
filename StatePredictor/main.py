@@ -14,11 +14,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from StatePredictor.eval_rollout import rollout_t_plus_1, rollout_t_plus_n, save_rollout_result, save_rollout_csv, \
-    plot_rollout_overlay
+    plot_rollout_overlay, plot_rollout_3d
 from plotting import load_jsonl, plot_all
 from data_builder import TrigonometricDataBuilder, DatasetSplits, Standardizer, \
-    SimulatorDataBuilder  # 你的 dataset_builder.py
-# 如果你的模型在别的文件，比如 model.py，请改成：from model import LSTMStatePredictor
+    SimulatorDataBuilder, ChaosDataBuilder  # 你的 dataset_builder.py
+
 from model import LSTMStatePredictor
 
 logging.basicConfig(
@@ -222,7 +222,7 @@ def main():
     standardize = True
 
     # Train config
-    epochs = 200
+    epochs = 500
     batch_size = 128
     lr = 1e-3
     max_pairs = 16
@@ -234,17 +234,17 @@ def main():
     dropout = 0.0
 
     # ---------- Build data ----------
-    builder = TrigonometricDataBuilder(
-        num_steps=num_steps,
-        mode=mode,
-        dt=0.01,
-        window_size=window_size,
-        stride=stride,
-        noise_std=noise_std,
-        split=split,
-        seed=seed,
-        standardize=standardize,
-    )
+    # builder = TrigonometricDataBuilder(
+    #     num_steps=num_steps,
+    #     mode=mode,
+    #     dt=0.01,
+    #     window_size=window_size,
+    #     stride=stride,
+    #     noise_std=noise_std,
+    #     split=split,
+    #     seed=seed,
+    #     standardize=standardize,
+    # )
     # builder = SimulatorDataBuilder(
     #     num_steps=20_000,
     #     window_size=32,
@@ -255,6 +255,15 @@ def main():
     #     policy="random",
     #     meta={"env": "NetworkSlicingEnv"},
     # )
+    builder = ChaosDataBuilder(
+        num_steps=20000,
+        dt=0.01,
+        window_size=32,
+        stride=1,
+        split=(0.7, 0.15, 0.15),
+        standardize=True,
+        seed=0,
+    )
     splits: DatasetSplits = builder.build()
     splits.save("data")
     input_dim = splits.raw.states.shape[1]
@@ -395,7 +404,7 @@ if __name__ == "__main__":
 
     # ---- rollout params ----
     K = run_cfg["window_size"]
-    L = 600
+    L = 10000
     start_t = 0
 
     # ---- t+1 / t+n ----
@@ -414,3 +423,7 @@ if __name__ == "__main__":
 
     plot_rollout_overlay(res_t1, title_prefix="TEST", save_plot=False)
     plot_rollout_overlay(res_tn, title_prefix="TEST", save_plot=False)
+
+    plot_rollout_3d(res_t1, title_prefix="TEST", save_plot=False)
+    plot_rollout_3d(res_tn, title_prefix="TEST", save_plot=False)
+

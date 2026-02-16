@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-
+from mpl_toolkits.mplot3d import Axes3D
 
 # -----------------------------
 # helpers: io / timestamp
@@ -68,16 +68,27 @@ def rollout_t_plus_1(
         pred         = next state prediction
         true         = states_phys[start_t+k+K]
     Output aligned to target timeline (start_t+K ... start_t+K+L-1)
+
+    Behavior change:
+      If requested length exceeds available range, L is clipped automatically.
     """
     model.eval()
     states_phys = np.asarray(states_phys, dtype=np.float32)
     T, D = states_phys.shape
     K = int(window_size)
-    L = int(length)
 
-    max_needed = start_t + (L - 1) + K
-    if start_t < 0 or max_needed >= T:
-        raise ValueError(f"Invalid range: need max index {max_needed} < T={T}")
+    if start_t < 0:
+        raise ValueError("start_t must be >= 0")
+    if start_t + K >= T:
+        raise ValueError(f"start_t+K must be < T. Got start_t={start_t}, K={K}, T={T}")
+
+    # Max L such that (start_t + (L-1) + K) < T  => L <= T - start_t - K
+    L_max = T - start_t - K
+    if L_max <= 0:
+        raise ValueError(f"No room for any prediction: L_max={L_max}. Check start_t/window_size.")
+
+    L_req = int(length)
+    L = min(L_req, L_max)
 
     preds = np.zeros((L, D), dtype=np.float32)
     trues = np.zeros((L, D), dtype=np.float32)
@@ -93,9 +104,13 @@ def rollout_t_plus_1(
         "start_t": start_t + K,
         "window_size": K,
         "length": L,
+        "length_requested": L_req,
+        "length_max": int(L_max),
+        "clipped": bool(L < L_req),
         "true": trues,
         "pred": preds,
     }
+
 
 
 # -----------------------------
@@ -113,19 +128,32 @@ def rollout_t_plus_n(
     device: torch.device,
 ) -> Dict[str, Any]:
     """
-    Free rollout:
-      first window is true physical
-      then feed predicted physical next state back into the window
+    Free rollout (closed-loop):
+      - first window is true physical
+      - then feed predicted physical next state back into the window
+
+    Behavior change:
+      If requested length exceeds available 'true' range, L is clipped automatically.
+      (Because we still return aligned ground-truth `true`.)
     """
     model.eval()
     states_phys = np.asarray(states_phys, dtype=np.float32)
     T, D = states_phys.shape
     K = int(window_size)
-    L = int(length)
 
-    max_needed = start_t + (L - 1) + K
-    if start_t < 0 or max_needed >= T:
-        raise ValueError(f"Invalid range: need max index {max_needed} < T={T}")
+    if start_t < 0:
+        raise ValueError("start_t must be >= 0")
+    if start_t + K >= T:
+        raise ValueError(f"start_t+K must be < T. Got start_t={start_t}, K={K}, T={T}")
+
+    # Need true at indices: start_t + K + k, for k=0..L-1
+    # => start_t + K + (L-1) < T  => L <= T - start_t - K
+    L_max = T - start_t - K
+    if L_max <= 0:
+        raise ValueError(f"No room for any rollout: L_max={L_max}. Check start_t/window_size.")
+
+    L_req = int(length)
+    L = min(L_req, L_max)
 
     window = states_phys[start_t : start_t + K].copy()  # (K,D)
 
@@ -135,8 +163,6 @@ def rollout_t_plus_n(
     for k in range(L):
         preds[k] = predict_next_state_phys(model, scaler, window, device)
         trues[k] = states_phys[start_t + K + k]
-
-        # feed predicted physical state
         window = np.vstack([window[1:], preds[k][None, :]])
 
     return {
@@ -144,9 +170,13 @@ def rollout_t_plus_n(
         "start_t": start_t + K,
         "window_size": K,
         "length": L,
+        "length_requested": L_req,
+        "length_max": int(L_max),
+        "clipped": bool(L < L_req),
         "true": trues,
         "pred": preds,
     }
+
 
 
 # -----------------------------
@@ -215,42 +245,136 @@ def plot_rollout_overlay(
     save_plot: bool = False,
     plots_dir: str = "./plots",
 ) -> Optional[str]:
-    true = np.asarray(result["true"], dtype=np.float32)
+
     pred = np.asarray(result["pred"], dtype=np.float32)
-    L, D = true.shape
+    true_raw = result.get("true", None)
+
+    if true_raw is not None:
+        true = np.asarray(true_raw, dtype=np.float32)
+        if true.shape != pred.shape:
+            raise ValueError("true and pred must have same shape")
+    else:
+        true = None
+
+    L, D = pred.shape
     t0 = int(result["start_t"])
     mode = str(result["mode"])
 
+    # Optional truncation
     if max_points is not None and L > max_points:
-        true = true[:max_points]
         pred = pred[:max_points]
-        L = true.shape[0]
+        if true is not None:
+            true = true[:max_points]
+        L = pred.shape[0]
 
     if dims is None:
-        # default max 6 dim
         dims = list(range(min(D, 6)))
 
     t = np.arange(t0, t0 + L)
 
     plt.figure(figsize=(12, 2.8 * len(dims)))
+
     for i, d in enumerate(dims, start=1):
         ax = plt.subplot(len(dims), 1, i)
-        ax.plot(t, true[:, d], linewidth=2, label=f"true dim {d}")
-        ax.plot(t, pred[:, d], linestyle="--", label=f"pred dim {d}")
+
+        # Plot true if available
+        if true is not None:
+            ax.plot(
+                t,
+                true[:, d],
+                linewidth=2,
+                label=f"true dim {d}",
+            )
+
+        # Always plot prediction
+        ax.plot(
+            t,
+            pred[:, d],
+            linestyle="--",
+            label=f"pred dim {d}",
+        )
+
         ax.set_xlabel("time index")
         ax.set_ylabel(f"state[{d}]")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="best")
 
-    title = f"{title_prefix} {mode} overlay (start={t0}, L={L}, K={result['window_size']})"
+    # Title logic
+    if true is None:
+        title = f"{title_prefix} {mode} overlay (pred only, start={t0}, L={L}, K={result['window_size']})"
+    else:
+        title = f"{title_prefix} {mode} overlay (start={t0}, L={L}, K={result['window_size']})"
+
     plt.suptitle(title, fontsize=14, y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
+    if save_plot:
+        outp = _ensure_dir(plots_dir)
+        fn = f"overlay_{title_prefix.lower()}_{mode}_{_ts()}.png"
+        path = str(outp / fn)
+        plt.savefig(path, dpi=200)
+        plt.close()
+        return path
+
+    plt.show()
+    return None
+
+
+
+def plot_rollout_3d(
+    result: Dict[str, Any],
+    *,
+    save_plot: bool = False,
+    plots_dir: str = "./plots",
+    title_prefix: str = "TEST",
+) -> Optional[str]:
+    """
+    Plot 3D trajectories:
+        - True trajectory
+        - Predicted trajectory
+    Works only when D >= 3
+    """
+    true = np.asarray(result["true"], dtype=np.float32)
+    pred = np.asarray(result["pred"], dtype=np.float32)
+
+    if true.shape[1] < 3:
+        raise ValueError("3D plot requires D >= 3")
+
+    mode = result["mode"]
+    t0 = result["start_t"]
+    L = result["length"]
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    ax.plot(
+        true[:, 0],
+        true[:, 1],
+        true[:, 2],
+        linewidth=1,
+        label="True",
+    )
+
+    ax.plot(
+        pred[:, 0],
+        pred[:, 1],
+        pred[:, 2],
+        linestyle="--",
+        linewidth=1,
+        label="Pred",
+    )
+
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.set_title(f"{title_prefix} {mode} 3D Trajectory (start={t0}, L={L})")
+
+    ax.legend()
     plt.tight_layout()
 
     if save_plot:
         outp = _ensure_dir(plots_dir)
-        fn = f"overlay_{title_prefix.lower()}_{mode}_start{t0}_K{result['window_size']}_L{L}_{_ts()}.png"
+        fn = f"trajectory3d_{title_prefix.lower()}_{mode}_{_ts()}.png"
         path = str(outp / fn)
         plt.savefig(path, dpi=200)
         plt.close()

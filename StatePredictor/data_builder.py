@@ -1,5 +1,6 @@
 # dataset_builder.py
 from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
@@ -13,12 +14,16 @@ from pathlib import Path
 
 from Simulator.environment import NetworkSlicingEnv
 from Simulator.config import Config
+from typing import Any, Dict, Optional, Tuple
+from scipy.integrate import solve_ivp
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
 )
 logger = logging.getLogger("data-builder")
+
+
 # ============================================================
 # 1. Common containers
 # ============================================================
@@ -72,11 +77,11 @@ class DatasetSplits:
 
     @staticmethod
     def load(
-        dir_path: str,
-        window_size: int,
-        stride: int = 1,
-        split: Optional[Tuple[float, float, float]] = None,
-        standardize: Optional[bool] = None,
+            dir_path: str,
+            window_size: int,
+            stride: int = 1,
+            split: Optional[Tuple[float, float, float]] = None,
+            standardize: Optional[bool] = None,
     ) -> "DatasetSplits":
         """
         Load raw states + meta, then rebuild train/val/test window datasets.
@@ -160,6 +165,8 @@ class Standardizer:
         s.mean_ = np.array(d["mean"], dtype=np.float32)
         s.std_ = np.array(d["std"], dtype=np.float32)
         return s
+
+
 # ============================================================
 # 3. Sliding-window dataset (core)
 # ============================================================
@@ -195,7 +202,7 @@ class NextStateWindowDataset(Dataset):
 
     def __getitem__(self, idx: int):
         i = int(self.indices[idx])
-        x_seq = self.states[i : i + self.window_size]
+        x_seq = self.states[i: i + self.window_size]
         y_next = self.states[i + self.window_size]
         return (
             torch.from_numpy(x_seq),
@@ -208,10 +215,10 @@ class NextStateWindowDataset(Dataset):
 # ============================================================
 
 def split_contiguous(
-    states: np.ndarray,
-    train_ratio: float,
-    val_ratio: float,
-    test_ratio: float,
+        states: np.ndarray,
+        train_ratio: float,
+        val_ratio: float,
+        test_ratio: float,
 ):
     if not np.isclose(train_ratio + val_ratio + test_ratio, 1.0):
         raise ValueError("Split ratios must sum to 1")
@@ -221,20 +228,20 @@ def split_contiguous(
     t_val = int(T * val_ratio)
 
     train = states[:t_train]
-    val = states[t_train : t_train + t_val]
-    test = states[t_train + t_val :]
+    val = states[t_train: t_train + t_val]
+    test = states[t_train + t_val:]
 
     return train, val, test
 
 
 def build_datasets(
-    train_states: np.ndarray,
-    val_states: np.ndarray,
-    test_states: np.ndarray,
-    window_size: int,
-    stride: int,
-    standardize: bool,
-    scaler_save_path: str | None = "model_components/standardizer.json"
+        train_states: np.ndarray,
+        val_states: np.ndarray,
+        test_states: np.ndarray,
+        window_size: int,
+        stride: int,
+        standardize: bool,
+        scaler_save_path: str | None = "model_components/standardizer.json"
 ):
     scaler = None
     if standardize:
@@ -266,16 +273,16 @@ class TrigonometricDataBuilder:
     """
 
     def __init__(
-        self,
-        num_steps: int,
-        mode: str = "both",      # sin | cos | both
-        dt: float = 0.01,
-        window_size: int = 32,
-        stride: int = 1,
-        noise_std: float = 0.0,
-        split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
-        seed: int = 0,
-        standardize: bool = True,
+            self,
+            num_steps: int,
+            mode: str = "both",  # sin | cos | both
+            dt: float = 0.01,
+            window_size: int = 32,
+            stride: int = 1,
+            noise_std: float = 0.0,
+            split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
+            seed: int = 0,
+            standardize: bool = True,
     ):
         self.num_steps = num_steps
         self.mode = mode
@@ -358,15 +365,15 @@ class SimulatorDataBuilder:
     """
 
     def __init__(
-        self,
-        num_steps: int,
-        window_size: int = 32,
-        stride: int = 1,
-        split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
-        seed: int = 0,
-        standardize: bool = True,
-        policy: str = "random",
-        meta: Optional[Dict[str, Any]] = None,
+            self,
+            num_steps: int,
+            window_size: int = 32,
+            stride: int = 1,
+            split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
+            seed: int = 0,
+            standardize: bool = True,
+            policy: str = "random",
+            meta: Optional[Dict[str, Any]] = None,
     ):
         self.num_steps = int(num_steps)
         self.window_size = int(window_size)
@@ -449,6 +456,162 @@ class SimulatorDataBuilder:
         )
 
         # record standardization info for reproducibility
+        if scaler is not None:
+            raw.meta["train_mean"] = scaler.mean_.tolist()
+            raw.meta["train_std"] = scaler.std_.tolist()
+
+        return DatasetSplits(raw, train_ds, val_ds, test_ds)
+
+
+# chaos_data_builder.py
+
+
+
+
+# 你项目里已有的这些类型/函数
+# from data_builder import TimeSeriesData, DatasetSplits, split_contiguous, build_datasets
+
+class ChaosDataBuilder:
+    """
+    Generate synthetic continuous time-series using the Lorenz system (chaotic attractor).
+
+    Produces states: np.ndarray of shape (T, 3)
+    Then splits contiguous into train/val/test and builds window datasets.
+    """
+
+    def __init__(
+            self,
+            num_steps: int,
+            dt: float = 0.01,
+            window_size: int = 32,
+            stride: int = 1,
+            noise_std: float = 0.0,
+            split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
+            seed: int = 0,
+            standardize: bool = True,
+            # Lorenz params
+            sigma: float = 10.0,
+            rho: float = 28.0,
+            beta: float = 8.0 / 3.0,
+            # IVP solver config
+            solver_method: str = "RK45",
+            rtol: float = 1e-8,
+            atol: float = 1e-10,
+            # optional initial condition (3,)
+            initial_state: Optional[np.ndarray] = None,
+            meta: Optional[Dict[str, Any]] = None,
+    ):
+        if num_steps <= 1:
+            raise ValueError("num_steps must be > 1")
+        if dt <= 0:
+            raise ValueError("dt must be > 0")
+        if window_size <= 0:
+            raise ValueError("window_size must be > 0")
+        if stride <= 0:
+            raise ValueError("stride must be > 0")
+        if noise_std < 0:
+            raise ValueError("noise_std must be >= 0")
+        if len(split) != 3 or not np.isclose(sum(split), 1.0):
+            raise ValueError("split must be 3-tuple that sums to 1.0")
+
+        self.num_steps = int(num_steps)
+        self.dt = float(dt)
+        self.window_size = int(window_size)
+        self.stride = int(stride)
+        self.noise_std = float(noise_std)
+        self.split = tuple(float(x) for x in split)
+        self.seed = int(seed)
+        self.standardize = bool(standardize)
+
+        self.sigma = float(sigma)
+        self.rho = float(rho)
+        self.beta = float(beta)
+
+        self.solver_method = str(solver_method)
+        self.rtol = float(rtol)
+        self.atol = float(atol)
+
+        self.initial_state = None if initial_state is None else np.asarray(initial_state, dtype=np.float64).reshape(3)
+        self.meta = meta or {}
+
+    def _generate_lorenz_states(self) -> np.ndarray:
+        rng = np.random.default_rng(self.seed)
+
+        if self.initial_state is None:
+            # 生成一个可复现的初值（别太大，避免刚开始数值爆得很厉害）
+            init = rng.normal(loc=0.0, scale=1.0, size=(3,)).astype(np.float64)
+        else:
+            init = self.initial_state.astype(np.float64)
+
+        t0 = 0.0
+        t1 = (self.num_steps - 1) * self.dt
+        t_eval = np.linspace(t0, t1, self.num_steps, dtype=np.float64)
+
+        sigma, rho, beta = self.sigma, self.rho, self.beta
+
+        def lorenz_ode(t: float, s: np.ndarray) -> np.ndarray:
+            x, y, z = s
+            dx = sigma * (y - x)
+            dy = x * (rho - z) - y
+            dz = x * y - beta * z
+            return np.array([dx, dy, dz], dtype=np.float64)
+
+        sol = solve_ivp(
+            fun=lorenz_ode,
+            t_span=(t0, t1),
+            y0=init,
+            t_eval=t_eval,
+            method=self.solver_method,
+            rtol=self.rtol,
+            atol=self.atol,
+        )
+        if not sol.success:
+            raise RuntimeError(f"solve_ivp failed: {sol.message}")
+
+        states = sol.y.T.astype(np.float32)  # (T,3)
+
+        if self.noise_std > 0:
+            states = states + rng.normal(0.0, self.noise_std, size=states.shape).astype(np.float32)
+
+        return states
+
+    def build(self):  # -> DatasetSplits
+        states = self._generate_lorenz_states()
+        if states.ndim != 2 or states.shape[1] != 3:
+            raise ValueError(f"Lorenz states must have shape (T,3), got {states.shape}")
+
+        raw = TimeSeriesData(
+            states=states,
+            meta={
+                "source": "lorenz",
+                "dt": self.dt,
+                "split": list(self.split),
+                "standardize": self.standardize,
+                "window_size": self.window_size,
+                "stride": self.stride,
+                "noise_std": self.noise_std,
+                "seed": self.seed,
+                "sigma": self.sigma,
+                "rho": self.rho,
+                "beta": self.beta,
+                "solver_method": self.solver_method,
+                "rtol": self.rtol,
+                "atol": self.atol,
+                **self.meta,
+            },
+        )
+
+        train_s, val_s, test_s = split_contiguous(states, *self.split)
+
+        train_ds, val_ds, test_ds, scaler = build_datasets(
+            train_s,
+            val_s,
+            test_s,
+            window_size=self.window_size,
+            stride=self.stride,
+            standardize=self.standardize,
+        )
+
         if scaler is not None:
             raw.meta["train_mean"] = scaler.mean_.tolist()
             raw.meta["train_std"] = scaler.std_.tolist()
