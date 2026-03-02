@@ -69,7 +69,7 @@ def train_ppo(
         env,
         verbose=1,
         learning_rate=3e-4,
-        n_steps=2048,
+        n_steps=128,
         batch_size=64,
         n_epochs=10,
         gamma=0.99,
@@ -102,6 +102,6 @@ if __name__ == "__main__":
 
     train_ppo(
         env_entrypoint=NetworkSlicingGymContinuous,
-        timesteps=10,
+        timesteps=10_000,
         save_path="models/PPO-Network-Slicing",
     )

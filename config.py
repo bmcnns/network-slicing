@@ -4,10 +4,12 @@ class Config:
     # ============================================
     # Cell and Users
     # ============================================
-    N_USERS = 100  # Total number of users
+    N_USERS = 180  # Total number of users
     CELL_RADIUS = 40  # meters
+    MIN_DISTANCE = 1
     N_SLICES = 3  # VoLTE, Video, URLLC
-    
+    SLICE_USER_COUNTS = [100, 50, 30]
+
     # Initial user distribution per slice (will be randomly generated)
     # Example: [30, 50, 20] means 30 VoLTE, 50 Video, 20 URLLC
     SLICE_NAMES = ['VoLTE', 'Video', 'URLLC']
@@ -55,56 +57,42 @@ class Config:
     # ============================================
     
     # VoLTE - Uniform distribution
-    VOLTE_MIN_INTERVAL = 40  # slots (20 ms)
-    VOLTE_MAX_INTERVAL = 80  # slots (40 ms)
-    VOLTE_PACKET_SIZE = 1020  # bits (51 Kbps * 20ms)
+    VOLTE_MIN_INTERVAL = 1  # slots (20 ms)
+    VOLTE_MAX_INTERVAL = 3 # slots (40 ms)
+    VOLTE_PACKET_SIZE = 1020  # bits
     
     # Video - Truncated Exponential distribution
-    VIDEO_LAMBDA = 0.02  # arrival rate parameter
-    VIDEO_MAX_INTERVAL = 100  # slots (50 ms) - truncation limit
-    VIDEO_PACKET_SIZE = 1280  # bits (64 Kbps * 20ms)
+    VIDEO_LAMBDA = 2  # arrival rate parameter
+    VIDEO_MAX_INTERVAL = 40  # slots (50 ms) - truncation limit
+    VIDEO_PACKET_SIZE = 1280  # bits
     
     # URLLC - Exponential distribution
-    URLLC_LAMBDA = 0.05  # arrival rate parameter
-    URLLC_PACKET_SIZE = 2000  # bits (9 Mbps * 0.5ms, large packet)
-    
+    URLLC_LAMBDA = 4  # arrival rate parameter
+    URLLC_PACKET_SIZE = 500  # bits
+
     # ============================================
     # SLA Requirements (from paper Table I)
     # ============================================
-    
-    # Rate requirements (bits per second) for per slice
-    # RATE_SLA = {
-    #    'VoLTE': 51e3,
-    #    'Video': 100e6,
-    #    'URLLC': 10e6
-    # }
-
     # Rate requirements (bits per second) for per user
     RATE_SLA = {
-        'VoLTE': 0.005e6,
-        'Video': 0.01e6,
-        'URLLC': 0.05e6
+        'VoLTE': 0.05e6,
+        'Video': 0.025e6,
+        'URLLC': 0.015e6
     }
+
     
     # Latency requirements (in slots)
-    # LATENCY_SLA = {
-    #     'VoLTE': 20,   # 10 ms = 20 slots
-    #     'Video': 20,   # 10 ms = 20 slots
-    #     'URLLC': 2     # 1 ms = 2 slots
-    # }
-
-
     LATENCY_SLA = {
-        'VoLTE': 50,
-        'Video': 50,
-        'URLLC': 20
+        'VoLTE': 40,
+        'Video': 40,
+        'URLLC': 30
     }
     
     # ============================================
     # Queue Parameters
     # ============================================
     # MAX_QUEUE_SIZE = 1000  # Maximum packets per slice queue
-    MAX_QUEUE_SIZE = 50 # Maximum packets per slice user
+    MAX_QUEUE_SIZE = 5000 # Maximum packets per slice user
     QUEUE_DISCIPLINE = 'FIFO'  # First In First Out
     
     # ============================================
@@ -123,8 +111,8 @@ class Config:
     # ============================================
     # Utility Function Parameters
     # ============================================
-    ALPHA = 0.1  # Weight for spectrum efficiency
-    BETA = [1.0, 1.0, 5.0]  # Weights for SSR of each slice
+    ALPHA = 0.01  # Weight for spectrum efficiency
+    BETA = [3.0, 2.0, 5.0]  # Weights for SSR of each slice
     
     # Reward shaping parameters (from paper equation 6)
     # GAMMA_MIN = 4.5
