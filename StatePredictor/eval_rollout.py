@@ -241,10 +241,17 @@ def plot_rollout_overlay(
     *,
     dims: Optional[List[int]] = None,
     max_points: Optional[int] = None,
+    smooth_window: Optional[int] = None,
     title_prefix: str = "TEST",
     save_plot: bool = False,
     plots_dir: str = "./plots",
 ) -> Optional[str]:
+
+    def _smooth(x: np.ndarray, k: int) -> np.ndarray:
+        if k <= 1:
+            return x
+        kernel = np.ones(k) / k
+        return np.convolve(x, kernel, mode="same")
 
     pred = np.asarray(result["pred"], dtype=np.float32)
     true_raw = result.get("true", None)
@@ -277,19 +284,28 @@ def plot_rollout_overlay(
     for i, d in enumerate(dims, start=1):
         ax = plt.subplot(len(dims), 1, i)
 
-        # Plot true if available
-        if true is not None:
+        pred_dim = pred[:, d]
+        true_dim = true[:, d] if true is not None else None
+
+        # Apply smoothing if requested
+        if smooth_window is not None and smooth_window > 1:
+            pred_dim = _smooth(pred_dim, smooth_window)
+            if true_dim is not None:
+                true_dim = _smooth(true_dim, smooth_window)
+
+        # Plot true
+        if true_dim is not None:
             ax.plot(
                 t,
-                true[:, d],
+                true_dim,
                 linewidth=2,
                 label=f"true dim {d}",
             )
 
-        # Always plot prediction
+        # Plot pred
         ax.plot(
             t,
-            pred[:, d],
+            pred_dim,
             linestyle="--",
             label=f"pred dim {d}",
         )
@@ -299,11 +315,12 @@ def plot_rollout_overlay(
         ax.grid(True, alpha=0.3)
         ax.legend(loc="best")
 
-    # Title logic
+    # Title
+    smooth_text = f", smooth={smooth_window}" if smooth_window else ""
     if true is None:
-        title = f"{title_prefix} {mode} overlay (pred only, start={t0}, L={L}, K={result['window_size']})"
+        title = f"{title_prefix} {mode} overlay (pred only, start={t0}, L={L}, K={result['window_size']}{smooth_text})"
     else:
-        title = f"{title_prefix} {mode} overlay (start={t0}, L={L}, K={result['window_size']})"
+        title = f"{title_prefix} {mode} overlay (start={t0}, L={L}, K={result['window_size']}{smooth_text})"
 
     plt.suptitle(title, fontsize=14, y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
@@ -382,3 +399,20 @@ def plot_rollout_3d(
 
     plt.show()
     return None
+
+def plot_rollout_4d_color(result):
+    true = np.asarray(result["true"], dtype=np.float32)
+
+    if true.shape[1] < 4:
+        raise ValueError("4D plot requires D >= 4")
+
+    x, y, z, w = true[:, 0], true[:, 1], true[:, 2], true[:, 3]
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    sc = ax.scatter(x, y, z, c=w, cmap="viridis", s=5)
+
+    fig.colorbar(sc, ax=ax, label="W (4th dimension)")
+    ax.set_title("4D Trajectory (Color Encoded)")
+    plt.show()

@@ -1,5 +1,3 @@
-import numpy as np
-
 class Config:
     """System configuration parameters"""
     
@@ -68,23 +66,24 @@ class Config:
     
     # URLLC - Exponential distribution
     URLLC_LAMBDA = 0.05  # arrival rate parameter
-    URLLC_PACKET_SIZE = 4500  # bits (9 Mbps * 0.5ms, large packet)
+    URLLC_PACKET_SIZE = 2000  # bits (9 Mbps * 0.5ms, large packet)
     
     # ============================================
     # SLA Requirements (from paper Table I)
     # ============================================
     
-    # Rate requirements (bits per second)
+    # Rate requirements (bits per second) for per slice
     # RATE_SLA = {
     #    'VoLTE': 51e3,
     #    'Video': 100e6,
     #    'URLLC': 10e6
     # }
 
+    # Rate requirements (bits per second) for per user
     RATE_SLA = {
-        'VoLTE': 0.5e6,
-        'Video': 0.5e6,
-        'URLLC': 0.5e6
+        'VoLTE': 0.005e6,
+        'Video': 0.01e6,
+        'URLLC': 0.05e6
     }
     
     # Latency requirements (in slots)
@@ -98,15 +97,22 @@ class Config:
     LATENCY_SLA = {
         'VoLTE': 50,
         'Video': 50,
-        'URLLC': 10
+        'URLLC': 20
     }
     
     # ============================================
     # Queue Parameters
     # ============================================
-    MAX_QUEUE_SIZE = 1000  # Maximum packets per slice queue
+    # MAX_QUEUE_SIZE = 1000  # Maximum packets per slice queue
+    MAX_QUEUE_SIZE = 50 # Maximum packets per slice user
     QUEUE_DISCIPLINE = 'FIFO'  # First In First Out
     
+    # ============================================
+    # Timeout Management
+    # ============================================
+    TIMEOUT_CHECK_INTERVAL = 10 
+    DEADLINE_TOLERANCE = 5
+
     # ============================================
     # Scheduler
     # ============================================
@@ -117,13 +123,18 @@ class Config:
     # ============================================
     # Utility Function Parameters
     # ============================================
-    ALPHA = 0.01  # Weight for spectrum efficiency
-    BETA = [1.0, 1.0, 1.0]  # Weights for SSR of each slice
+    ALPHA = 0.1  # Weight for spectrum efficiency
+    BETA = [1.0, 1.0, 5.0]  # Weights for SSR of each slice
     
     # Reward shaping parameters (from paper equation 6)
-    GAMMA_MIN = 4.5
-    GAMMA_MAX = 6.5
+    # GAMMA_MIN = 4.5
+    # GAMMA_MAX = 6.5
+    # GAMMA_GROWTH_RATE = 0.0001  # Per step
+
+    GAMMA_MIN = 0.6
+    GAMMA_MAX = 2.0
     GAMMA_GROWTH_RATE = 0.0001  # Per step
+
     
     # ============================================
     # Simulation Parameters

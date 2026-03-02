@@ -1,57 +1,107 @@
-import numpy as np
-from Simulator.environment import NetworkSlicingEnv
-from Simulator.metrics import MetricsTracker
-from Simulator.config import Config
-
-def test_random_policy(n_steps=10):
-    """
-    Test environment with random bandwidth allocation policy
-    
-    Args:
-        n_steps (int): Number of steps to run
-    """
-    print("="*60)
-    print("Testing Network Slicing Environment")
-    print("="*60)
-    
-    # Create environment
-    env = NetworkSlicingEnv(seed=Config.RANDOM_SEED)
-    
-    # Create metrics tracker
-    tracker = MetricsTracker()
-        
-    # Run simulation
-    print(f"\nRunning {n_steps} steps with random policy...")
-    
-    for step in range(n_steps):
-        # Random action: random bandwidth allocation
-        # Ensure sum = 20 MHz
-        action = np.random.dirichlet([1, 1, 1]) * 20  # MHz
-        
-        # print(f"Step {step}, Atcion Before setting: {action}\n")
-
-        # Execute step
-        state, reward, done, info = env.step(action)
-        
-        # Update metrics
-        tracker.update(info, reward)
-        
-        # Print step info
-        print(f"\nStep {step + 1}:")
-        print(f"  Action (MHz): {action}")
-        print(f"  Spectrum Efficiency: {info['spectrum_efficiency']:.4f}")
-        print(f"  SSR: {info['ssr']}")
-        print(f"  Utility: {info['utility']:.4f}")
-        print(f"  Reward: {reward:.4f}")
-        print(f"  State: {state}")        
-    
-    # Print summary
-    # tracker.print_summary()
+import gymnasium as gym
+from stable_baselines3 import DQN, PPO
+from gym_env import *
 
 
+def train_dqn(
+    env_entrypoint,
+    timesteps=50_000,
+    save_path="models/DQN-Network-Slicing",
+    env_id="NetworkSlicing-DQN-v0",
+):
+    print("=" * 50)
+    print("Training DQN...")
+    print("=" * 50)
+
+    # Register env (allow different entrypoints)
+    gym.register(
+        id=env_id,
+        entry_point=env_entrypoint,
+    )
+
+    env = gym.make(env_id)
+    callback = GnuplotLoggerCallback(filename="training_dqn.dat")
+
+    model = DQN(
+        "MlpPolicy",
+        env,
+        verbose=1,
+        learning_rate=1e-3,
+        buffer_size=50000,
+        learning_starts=1000,
+        batch_size=128,
+        gamma=0.99,
+        train_freq=4,
+        target_update_interval=500,
+        exploration_fraction=0.3,
+        exploration_initial_eps=1.0,
+        exploration_final_eps=0.05,
+    )
+
+    model.learn(total_timesteps=timesteps, callback=callback)
+    model.save(save_path)
+
+    print(f"DQN model saved to {save_path}")
+    print("=" * 50)
+
+
+def train_ppo(
+    env_entrypoint,
+    timesteps=100_000,
+    save_path="models/PPO-Network-Slicing",
+    env_id="NetworkSlicing-PPO-v0",
+):
+    print("=" * 50)
+    print("Training PPO...")
+    print("=" * 50)
+
+    # Register env (allow different entrypoints)
+    gym.register(
+        id=env_id,
+        entry_point=env_entrypoint,
+    )
+
+    env = gym.make(env_id)
+    callback = GnuplotLoggerCallback(filename="training_ppo.dat")
+
+    model = PPO(
+        "MlpPolicy",
+        env,
+        verbose=1,
+        learning_rate=3e-4,
+        n_steps=2048,
+        batch_size=64,
+        n_epochs=10,
+        gamma=0.99,
+        gae_lambda=0.95,
+        clip_range=0.2,
+        ent_coef=0.01,
+        vf_coef=0.5,
+        max_grad_norm=0.5,
+    )
+
+    model.learn(total_timesteps=timesteps, callback=callback)
+    model.save(save_path)
+
+    print(f"PPO model saved to {save_path}")
+    print("=" * 50)
 
 
 if __name__ == "__main__":
-    # Test 1: Random policy
-    test_random_policy(n_steps=5)
-    
+    # train_dqn(
+    #     env_entrypoint=NetworkSlicingGym,
+    #     timesteps=10_000,
+    #     save_path="models/DQN-Network-Slicing",
+    # )
+
+    # train_dqn(
+    #     env_entrypoint=NetworkSlicingGymDiscrete,
+    #     timesteps=50_000,
+    #     save_path="models/DQN-Network-Slicing",
+    # )
+
+    train_ppo(
+        env_entrypoint=NetworkSlicingGymContinuous,
+        timesteps=10,
+        save_path="models/PPO-Network-Slicing",
+    )

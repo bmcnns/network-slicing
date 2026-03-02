@@ -14,10 +14,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from StatePredictor.eval_rollout import rollout_t_plus_1, rollout_t_plus_n, save_rollout_result, save_rollout_csv, \
-    plot_rollout_overlay, plot_rollout_3d
+    plot_rollout_overlay, plot_rollout_3d, plot_rollout_4d_color
 from plotting import load_jsonl, plot_all
 from data_builder import TrigonometricDataBuilder, DatasetSplits, Standardizer, \
-    SimulatorDataBuilder, ChaosDataBuilder  # 你的 dataset_builder.py
+    SimulatorDataBuilder, ChaosDataBuilder, CSVDataBuilder
 
 from model import LSTMStatePredictor
 
@@ -201,11 +201,22 @@ def save_lstm_checkpoint(
     logger.info(f"[INFO] Saved LSTM checkpoint to: {path}")
 
 
+def load_csv_4d(csv_path: str) -> np.ndarray:
+    """
+    CSV 有表头，且只有 4 列纯数值 state。
+    行号 = 时间索引，不需要额外 time 列。
+    """
+    states = np.loadtxt(csv_path, delimiter=",", skiprows=1, dtype=np.float32)
+    if states.ndim != 2 or states.shape[1] != 4:
+        raise ValueError(f"Expected (T,4) after header, got {states.shape}")
+    return states
+
 # -----------------------------
 # Main
 # -----------------------------
 def main():
     # ---------- Config ----------
+    CSV_PATH = "data/agent.csv"  # 改这里random_policy.csv
     seed = 0
     torch.manual_seed(seed)
 
@@ -217,19 +228,19 @@ def main():
     mode = "sin"  # "sin" | "cos" | "both" only for trig dataset for testing the model
     window_size = 32
     stride = 1
-    noise_std = 0.01
+    noise_std = 1
     split = (0.7, 0.15, 0.15)
     standardize = True
 
     # Train config
-    epochs = 500
+    epochs = 1000
     batch_size = 128
     lr = 1e-3
     max_pairs = 16
     log_path = "log/train_log.jsonl"
 
     # Model config
-    hidden_dim = 64
+    hidden_dim = 64 # 8
     num_layers = 1
     dropout = 0.0
 
@@ -255,15 +266,25 @@ def main():
     #     policy="random",
     #     meta={"env": "NetworkSlicingEnv"},
     # )
-    builder = ChaosDataBuilder(
-        num_steps=20000,
-        dt=0.01,
-        window_size=32,
-        stride=1,
-        split=(0.7, 0.15, 0.15),
-        standardize=True,
-        seed=0,
+    # builder = ChaosDataBuilder(
+    #     num_steps=20000,
+    #     dt=0.01,
+    #     window_size=32,
+    #     stride=1,
+    #     split=(0.7, 0.15, 0.15),
+    #     standardize=True,
+    #     noise_std=noise_std,
+    #     seed=0,
+    # )
+    builder = CSVDataBuilder(
+        csv_path=CSV_PATH,
+        window_size=window_size,
+        stride=stride,
+        split=split,
+        seed=seed,
+        standardize=standardize,
     )
+
     splits: DatasetSplits = builder.build()
     splits.save("data")
     input_dim = splits.raw.states.shape[1]
@@ -421,9 +442,11 @@ if __name__ == "__main__":
     save_rollout_result(res_t1, out_dir="./eval_outputs", prefix="test")
     save_rollout_result(res_tn, out_dir="./eval_outputs", prefix="test")
 
-    plot_rollout_overlay(res_t1, title_prefix="TEST", save_plot=False)
-    plot_rollout_overlay(res_tn, title_prefix="TEST", save_plot=False)
+    plot_rollout_overlay(res_t1, title_prefix="TEST", save_plot=False, smooth_window=20)
+    plot_rollout_overlay(res_tn, title_prefix="TEST", save_plot=False, smooth_window=20)
 
     plot_rollout_3d(res_t1, title_prefix="TEST", save_plot=False)
     plot_rollout_3d(res_tn, title_prefix="TEST", save_plot=False)
+    plot_rollout_4d_color(res_t1)
+    plot_rollout_4d_color(res_tn)
 

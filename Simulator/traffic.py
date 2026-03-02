@@ -43,7 +43,7 @@ class TrafficGenerator:
             return self._generate_exponential(duration_slots, start_slot)
         else:
             raise ValueError(f"Unknown slice: {self.slice_name}")
-    
+
     def _generate_uniform(self, duration_slots, start_slot=0):
         """
         Generate VoLTE traffic with Uniform inter-arrival time
@@ -55,7 +55,7 @@ class TrafficGenerator:
             list of Packet: Generated packets
         """
         packets = []
-        relative_slot = np.random.randint(0, Config.SLOTS_PER_STEP)
+        relative_slot = self.random_state.randint(0, Config.SLOTS_PER_STEP)
         
         while relative_slot < duration_slots:
             global_arrival = int(start_slot + relative_slot)
@@ -89,7 +89,7 @@ class TrafficGenerator:
             list of Packet: Generated packets
         """
         packets = []
-        relative_slot = np.random.randint(0, Config.SLOTS_PER_STEP)
+        relative_slot = self.random_state.randint(0, Config.SLOTS_PER_STEP)
         
         while relative_slot < duration_slots:
             global_arrival = int(start_slot + relative_slot)

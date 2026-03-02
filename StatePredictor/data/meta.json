@@ -1,6 +1,12 @@
 {
-  "source": "lorenz",
-  "dt": 0.01,
+  "source": "csv",
+  "csv_path": "data/agent.csv",
+  "columns": [
+    "video-queue-length",
+    "urllc-queue-length",
+    "video-bandwidth",
+    "urllc-bandwidth"
+  ],
   "split": [
     0.7,
     0.15,
@@ -9,22 +15,17 @@
   "standardize": true,
   "window_size": 32,
   "stride": 1,
-  "noise_std": 0.0,
   "seed": 0,
-  "sigma": 10.0,
-  "rho": 28.0,
-  "beta": 2.6666666666666665,
-  "solver_method": "RK45",
-  "rtol": 1e-08,
-  "atol": 1e-10,
   "train_mean": [
-    -0.9066628217697144,
-    -0.8981593251228333,
-    23.758708953857422
+    15.235642433166504,
+    22.815786361694336,
+    151.2167205810547,
+    98.21186065673828
   ],
   "train_std": [
-    7.918313026428223,
-    8.937692642211914,
-    8.44313907623291
+    24.592527389526367,
+    30.569091796875,
+    51.39820861816406,
+    51.10197830200195
   ]
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+import random
 from typing import Callable, Dict, Optional, Tuple, Any, List
 
 import numpy as np
@@ -399,12 +400,13 @@ class SimulatorDataBuilder:
         for t in range(self.num_steps):
             if self.policy == "random":
                 # Dirichlet -> sum = 20 MHz
+                # todo: try different actnions
                 action = rng.dirichlet([1.0, 1.0, 1.0]) * 20.0
             else:
                 raise RuntimeError("Unreachable")
 
             state, reward, done, info = env.step(action)
-
+            state = [random.randint(1, 100) for _ in range(3)]
             # Ensure (D,)
             state_arr = np.asarray(state, dtype=np.float32).reshape(-1)
             states.append(state_arr)
@@ -462,14 +464,6 @@ class SimulatorDataBuilder:
 
         return DatasetSplits(raw, train_ds, val_ds, test_ds)
 
-
-# chaos_data_builder.py
-
-
-
-
-# 你项目里已有的这些类型/函数
-# from data_builder import TimeSeriesData, DatasetSplits, split_contiguous, build_datasets
 
 class ChaosDataBuilder:
     """
@@ -610,6 +604,108 @@ class ChaosDataBuilder:
             window_size=self.window_size,
             stride=self.stride,
             standardize=self.standardize,
+        )
+
+        if scaler is not None:
+            raw.meta["train_mean"] = scaler.mean_.tolist()
+            raw.meta["train_std"] = scaler.std_.tolist()
+
+        return DatasetSplits(raw, train_ds, val_ds, test_ds)
+
+
+class CSVDataBuilder:
+    """
+    Build continuous time-series from CSV file.
+
+    Assumptions:
+      - First row is header
+      - Remaining rows are numeric state values
+      - Each row is one time step
+      - Dimension D inferred from column count (not fixed)
+    """
+
+    def __init__(
+            self,
+            csv_path: str,
+            window_size: int = 32,
+            stride: int = 1,
+            split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
+            seed: int = 0,
+            standardize: bool = True,
+            delimiter: str = ",",
+    ):
+        self.csv_path = csv_path
+        self.window_size = window_size
+        self.stride = stride
+        self.split = split
+        self.seed = seed
+        self.standardize = standardize
+        self.delimiter = delimiter
+
+        if not np.isclose(sum(split), 1.0):
+            raise ValueError("Split ratios must sum to 1")
+
+    def build(self) -> DatasetSplits:
+        # deterministic style (same as other builders)
+        random.seed(self.seed)
+        np.random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # ---- read header ----
+        with open(self.csv_path, "r", encoding="utf-8") as f:
+            header_line = f.readline().strip()
+
+        if not header_line:
+            raise ValueError("CSV header is empty")
+
+        columns = [c.strip() for c in header_line.split(self.delimiter)]
+
+        # ---- read numeric data ----
+        states = np.loadtxt(
+            self.csv_path,
+            delimiter=self.delimiter,
+            skiprows=1,
+            dtype=np.float32,
+        )
+
+        if states.ndim == 1:
+            states = states.reshape(1, -1)
+
+        if states.ndim != 2:
+            raise ValueError("CSV must produce (T,D) array")
+
+        if states.shape[1] != len(columns):
+            raise ValueError(
+                f"Header columns ({len(columns)}) != data columns ({states.shape[1]})"
+            )
+
+        raw = TimeSeriesData(
+            states=states.astype(np.float32, copy=False),
+            meta={
+                "source": "csv",
+                "csv_path": self.csv_path,
+                "columns": columns,
+                "split": list(self.split),
+                "standardize": self.standardize,
+                "window_size": self.window_size,
+                "stride": self.stride,
+                "seed": self.seed,
+            },
+        )
+
+        # ---- contiguous split ----
+        train_s, val_s, test_s = split_contiguous(
+            states, *self.split
+        )
+
+        # ---- build sliding-window datasets ----
+        train_ds, val_ds, test_ds, scaler = build_datasets(
+            train_s,
+            val_s,
+            test_s,
+            self.window_size,
+            self.stride,
+            self.standardize,
         )
 
         if scaler is not None:
