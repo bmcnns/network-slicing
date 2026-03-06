@@ -59,6 +59,8 @@ class ChannelModel:
         Returns:
             float: SNR (linear, not dB)
         """
+        if bandwidth <= 0 or tx_power <= 0:
+            return 0.0
         received_power = channel_gain * tx_power
         noise_power = self.n0_effective * bandwidth
         snr = received_power / noise_power
