@@ -1,8 +1,8 @@
 import numpy as np
-from Simulator.config import Config
-from Simulator.channel import ChannelModel
-from Simulator.network_slice import NetworkSlice
-from Simulator.packet import Packet
+from .config import Config
+from .channel import ChannelModel
+from .network_slice import NetworkSlice
+from .packet import Packet
 
 class NetworkSlicingEnv:
     """
@@ -27,7 +27,7 @@ class NetworkSlicingEnv:
         self.channel_model = ChannelModel()
         
         # Initialize users
-        self._init_users()
+        self._init_users() 
         
         # Initialize slices
         self._init_slices()
@@ -46,8 +46,9 @@ class NetworkSlicingEnv:
         
         # Randomly distribute users in circular cell
         angles = self.random_state.uniform(0, 2*np.pi, self.n_users)
-        distances = self.random_state.uniform(0, Config.CELL_RADIUS, self.n_users)
-        
+        # distances = self.random_state.uniform(0, Config.CELL_RADIUS, self.n_users)
+        distances = self.random_state.uniform(Config.MIN_DISTANCE, Config.CELL_RADIUS, self.n_users)
+
         # User positions (x, y)
         self.user_positions = np.column_stack([
             distances * np.cos(angles),
@@ -70,7 +71,11 @@ class NetworkSlicingEnv:
         """Initialize network slices with random user assignment"""
         # Randomly assign users to slices
         # Example: [30, 50, 20] for VoLTE, Video, URLLC
-        slice_sizes = self._random_slice_assignment()
+        # ========== For random distribute users =========
+        # slice_sizes = self._random_slice_assignment()
+
+        # ========= For Manual Set users ==========
+        slice_sizes = Config.SLICE_USER_COUNTS
 
         user_ids = list(range(self.n_users))
         self.random_state.shuffle(user_ids)
@@ -207,8 +212,6 @@ class NetworkSlicingEnv:
         # Calculate metrics
         metrics = self._calculate_metrics(bandwidth_allocation)
         
-        # state = self._build_rich_state(metrics, bandwidth_allocation)
-
         # Calculate reward
         reward = self._calculate_reward(metrics['utility'])
 
@@ -307,53 +310,116 @@ class NetworkSlicingEnv:
             for slice_name in Config.SLICE_NAMES:
                 self._transmit_slice(slice_name, slot)
 
+    # def _transmit_slice(self, slice_name, slot):
+    #     """
+    #     Transmit packets for one slice in one slot
+        
+    #     Args:
+    #         slice_name (str): Slice name
+    #         slot (int): Current slot number
+    #     """
+    #     slice_obj = self.slices[slice_name]
+    #     scheduler = slice_obj.scheduler
+        
+    #     # Get next packet to transmit
+    #     packet, dropped_packets = scheduler.get_next_packet(current_slot=slot)
+
+    #     slice_obj.dropped_packets += len(dropped_packets)
+
+    #     if packet is None:
+    #         return  # No packets to transmit
+
+    #     # Mark transmission start
+    #     packet.start_transmission(slot)
+        
+    #     # Get user's channel gain
+    #     user_id = packet.user_id
+    #     channel_gain = self.user_channel_gains[user_id]
+        
+    #     # Calculate per-user power (equal power per user in slice)
+    #     n_users_in_slice = len(slice_obj.user_ids)
+    #     user_power = slice_obj.power / n_users_in_slice if n_users_in_slice > 0 else 0
+        
+    #     # Calculate how many bits can be transmitted this slot
+    #     bits_transmittable = self.channel_model.calculate_transmittable_bits(
+    #         channel_gain,
+    #         user_power,
+    #         slice_obj.bandwidth,
+    #         Config.SLOT_DURATION
+    #     )
+        
+    #     # Transmit bits
+    #     completed_packet = scheduler.transmit(bits_transmittable)
+        
+    #     # If packet completed
+    #     if completed_packet is not None:
+    #         completed_packet.complete_transmission(slot)
+            
+    #         # Record transmitted bits for rate SLA
+    #         self.user_transmitted_bits[user_id] += completed_packet.original_size
+
+
+    
     def _transmit_slice(self, slice_name, slot):
         """
-        Transmit packets for one slice in one slot
-        
+        Transmit packets for one slice in one slot.
+
+        Uses the full slot bit budget (determined by bandwidth allocation) to
+        serve as many queued packets as possible, so that bandwidth allocation
+        has a measurable effect on SSR and reward.
+
         Args:
-            slice_name (str): Slice name
-            slot (int): Current slot number
+            slice_name (str): Slice name ('VoLTE', 'Video', or 'URLLC')
+            slot (int): Current global slot number
         """
         slice_obj = self.slices[slice_name]
         scheduler = slice_obj.scheduler
-        
-        # Get next packet to transmit
-        packet, dropped_packets = scheduler.get_next_packet(current_slot=slot)
 
-        slice_obj.dropped_packets += len(dropped_packets)
+        n_users = len(slice_obj.user_ids)
+        if n_users == 0:
+            return
 
-        if packet is None:
-            return  # No packets to transmit
+        user_power = slice_obj.power / n_users
 
-        # Mark transmission start
-        packet.start_transmission(slot)
-        
-        # Get user's channel gain
-        user_id = packet.user_id
-        channel_gain = self.user_channel_gains[user_id]
-        
-        # Calculate per-user power (equal power per user in slice)
-        n_users_in_slice = len(slice_obj.user_ids)
-        user_power = slice_obj.power / n_users_in_slice if n_users_in_slice > 0 else 0
-        
-        # Calculate how many bits can be transmitted this slot
-        bits_transmittable = self.channel_model.calculate_transmittable_bits(
-            channel_gain,
-            user_power,
-            slice_obj.bandwidth,
-            Config.SLOT_DURATION
+        # Use average channel gain to estimate how many packets this slice can serve per slot
+        avg_gain = float(np.mean([self.user_channel_gains[uid] for uid in slice_obj.user_ids]))
+        avg_bits_per_slot = self.channel_model.calculate_transmittable_bits(
+            avg_gain, user_power, slice_obj.bandwidth, Config.SLOT_DURATION
         )
-        
-        # Transmit bits
-        completed_packet = scheduler.transmit(bits_transmittable)
-        
-        # If packet completed
-        if completed_packet is not None:
-            completed_packet.complete_transmission(slot)
-            
-            # Record transmitted bits for rate SLA
-            self.user_transmitted_bits[user_id] += completed_packet.original_size
+        min_pkt_size   = Config.get_packet_size(slice_name)
+        pkts_remaining = int(avg_bits_per_slot / min_pkt_size) + 1
+
+        # Serve packets until the estimated slot capacity is used up or all queues are empty.
+        while pkts_remaining > 0:
+            # get_next_packet returns the in-progress packet
+            packet, dropped = scheduler.get_next_packet(current_slot=slot)
+            slice_obj.dropped_packets += len(dropped)
+
+            if packet is None:
+                break   # All queues empty; unused bandwidth is wasted this slot.
+
+            packet.start_transmission(slot)
+
+            # Compute deliverable bits for this specific user using their own channel gain.
+            user_bits = self.channel_model.calculate_transmittable_bits(
+                self.user_channel_gains[packet.user_id],
+                user_power,
+                slice_obj.bandwidth,
+                Config.SLOT_DURATION
+            )
+
+            completed = scheduler.transmit(user_bits)
+
+            if completed is not None:
+                # Packet fully delivered: record bits and move to next packet.
+                completed.complete_transmission(slot)
+                self.user_transmitted_bits[completed.user_id] += completed.original_size
+                pkts_remaining -= 1
+            else:
+                # Packet spans multiple slots; stop here for this slot.
+                break
+
+
 
     def _check_qos(self):
         """
@@ -406,6 +472,8 @@ class NetworkSlicingEnv:
             dict: Performance metrics
         """
         # Calculate Spectrum Efficiency (SE)
+
+        # =========== Use actual throughput to calcualte SE ========
         total_rate = 0
         for slice_name in Config.SLICE_NAMES:
             slice_obj = self.slices[slice_name]
@@ -416,6 +484,26 @@ class NetworkSlicingEnv:
         
         spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
         
+        # ============ Use only allocated bandwith to calculate SE ========
+        # total_rate = 0
+        # for slice_name in Config.SLICE_NAMES:
+        #     slice_obj = self.slices[slice_name]
+        #     n_users_in_slice = len(slice_obj.user_ids)
+        #     if n_users_in_slice == 0:
+        #         continue
+        #     user_power = slice_obj.power / n_users_in_slice
+        #     for user_id in slice_obj.user_ids:
+        #         if slice_obj.bandwidth <= 0:
+        #             continue
+        #         r_nk = self.channel_model.calculate_shannon_rate(
+        #             self.user_channel_gains[user_id],
+        #             user_power,
+        #             slice_obj.bandwidth
+        #         )
+        #         total_rate += r_nk
+
+        # spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
+
         # Calculate SSR for each slice
         ssrs = {}
         for slice_name in Config.SLICE_NAMES:
@@ -461,58 +549,58 @@ class NetworkSlicingEnv:
         # Calculate growing threshold
 
         #  =========== Reward Test 1 =============
-        # gamma_t = min(
-        #     Config.GAMMA_MIN + Config.GAMMA_GROWTH_RATE * self.current_step,
-        #     Config.GAMMA_MAX
-        # )
-        
-        # if utility < gamma_t:
-        #     reward = 0.0
-        # elif gamma_t <= utility < Config.GAMMA_MAX:
-        #     reward = 1.0
-        # else:
-        #     reward = 1.0 + (utility - Config.GAMMA_MAX) / 2.0
-        
-        # return reward
-    
-        #  =========== Reward Test 2 =============
-
         gamma_t = min(
             Config.GAMMA_MIN + Config.GAMMA_GROWTH_RATE * self.current_step,
             Config.GAMMA_MAX
         )
-
+        
         if utility < gamma_t:
-            reward = utility * 0.1  # Weak signal
+            reward = 0.0
+        elif gamma_t <= utility < Config.GAMMA_MAX:
+            reward = 1.0
         else:
             reward = 1.0 + (utility - Config.GAMMA_MAX) / 2.0
-
-        reward = reward * 10
-
+        
         return reward
     
+        #  =========== Reward Test 2 =============
+
+        # gamma_t = min(
+        #     Config.GAMMA_MIN + Config.GAMMA_GROWTH_RATE * self.current_step,
+        #     Config.GAMMA_MAX
+        # )
+
+        # if utility < gamma_t:
+        #     reward = utility * 0.1  # Weak signal
+        # else:
+        #     reward = 1.0 + (utility - Config.GAMMA_MAX) / 2.0
+
+        # reward = reward * 10
+
+        # return reward
+    
         #  =========== Reward Test =============
-        ssrs = [self.slices[s].get_ssr() for s in Config.SLICE_NAMES]
-        ssr_volte, ssr_video, ssr_urllc = ssrs
+        # ssrs = [self.slices[s].get_ssr() for s in Config.SLICE_NAMES]
+        # ssr_volte, ssr_video, ssr_urllc = ssrs
         
-        reward = 0
+        # reward = 0
         
-        if ssr_volte > 0.90:
-            reward += 30
-        else:
-            reward += ssr_volte * 30
+        # if ssr_volte > 0.90:
+        #     reward += 30
+        # else:
+        #     reward += ssr_volte * 30
         
-        if ssr_video > 0.90:
-            reward += 30
-        else:
-            reward += ssr_video * 30
+        # if ssr_video > 0.90:
+        #     reward += 30
+        # else:
+        #     reward += ssr_video * 30
         
-        if ssr_urllc > 0.05:
-            reward += 40
-        else:
-            reward += ssr_urllc * 800
+        # if ssr_urllc > 0.05:
+        #     reward += 40
+        # else:
+        #     reward += ssr_urllc * 800
         
-        if ssr_volte > 0.90 and ssr_video > 0.90 and ssr_urllc > 0.05:
-            reward += 50
+        # if ssr_volte > 0.90 and ssr_video > 0.90 and ssr_urllc > 0.05:
+        #     reward += 50
         
-        return reward
+        # return reward

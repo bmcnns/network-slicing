@@ -18,6 +18,8 @@ from Simulator.config import Config
 from typing import Any, Dict, Optional, Tuple
 from scipy.integrate import solve_ivp
 
+from Simulator.gym_env import NetworkSlicingGymContinuous
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -355,10 +357,11 @@ class TrigonometricDataBuilder:
 
 class SimulatorDataBuilder:
     """
-    Build dataset by running the NetworkSlicing simulator with a built-in policy.
+    Build dataset by running the NetworkSlicingGymContinuous simulator.
 
-    Current policy:
-      - "random": Dirichlet random bandwidth allocation (sum = 20 MHz)
+    Policy modes:
+      - agent is None  -> use random policy
+      - agent provided -> use agent.predict(obs)
 
     Output:
       - raw.states: (T, D) continuous physical state sequence
@@ -366,15 +369,16 @@ class SimulatorDataBuilder:
     """
 
     def __init__(
-            self,
-            num_steps: int,
-            window_size: int = 32,
-            stride: int = 1,
-            split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
-            seed: int = 0,
-            standardize: bool = True,
-            policy: str = "random",
-            meta: Optional[Dict[str, Any]] = None,
+        self,
+        num_steps: int,
+        window_size: int = 32,
+        stride: int = 1,
+        split: Tuple[float, float, float] = (0.7, 0.15, 0.15),
+        seed: int = 0,
+        standardize: bool = True,
+        policy: str = "random",
+        meta: Optional[Dict[str, Any]] = None,
+        agent=None,
     ):
         self.num_steps = int(num_steps)
         self.window_size = int(window_size)
@@ -384,54 +388,85 @@ class SimulatorDataBuilder:
         self.standardize = bool(standardize)
         self.policy = policy
         self.meta = meta or {}
+        self.agent = agent
 
-        if policy not in {"random"}:
+        if policy not in {"random", "agent"}:
             raise ValueError(f"Unsupported policy: {policy}")
+
+    def _sample_random_action(self, rng: np.random.Generator) -> np.ndarray:
+        """
+        Sample a random non-negative 3D action.
+        The env wrapper will normalize it internally.
+        """
+        action = rng.random(3, dtype=np.float32)
+        if float(action.sum()) == 0.0:
+            action = np.array([1/3, 1/3, 1/3], dtype=np.float32)
+        return action.astype(np.float32)
+
+    def _get_agent_name(self) -> str:
+        if self.agent is None:
+            return "random policy"
+        return self.agent.__class__.__name__
 
     # -----------------------------
     # Internal: run simulator
     # -----------------------------
     def _run_simulator(self) -> np.ndarray:
         rng = np.random.default_rng(self.seed)
-        env = NetworkSlicingEnv(seed=self.seed)
+        env = NetworkSlicingGymContinuous()
+
+        # reset once and record the initial observation if you want
+        obs, _ = env.reset(seed=self.seed)
 
         states = []
+        states.append(np.asarray(obs, dtype=np.float32).reshape(-1))
+
+        use_agent = self.agent is not None and self.policy == "agent"
+
+        if use_agent:
+            print(f"[SimulatorDataBuilder] Using {self._get_agent_name()} agent.")
+        else:
+            print("[SimulatorDataBuilder] No agent provided, using random policy.")
 
         for t in range(self.num_steps):
-            if self.policy == "random":
-                # Dirichlet -> sum = 20 MHz
-                # todo: try different actnions
-                action = rng.dirichlet([1.0, 1.0, 1.0]) * 20.0
+            if use_agent:
+                # Compatible with Stable-Baselines3 style agent
+                action, _ = self.agent.predict(obs, deterministic=True)
+                action = np.asarray(action, dtype=np.float32).reshape(-1)
             else:
-                raise RuntimeError("Unreachable")
+                action = self._sample_random_action(rng)
 
-            state, reward, done, info = env.step(action)
-            state = [random.randint(1, 100) for _ in range(3)]
-            # Ensure (D,)
-            state_arr = np.asarray(state, dtype=np.float32).reshape(-1)
-            states.append(state_arr)
+            next_obs, reward, term, trunc, info = env.step(action)
+            next_obs_arr = np.asarray(next_obs, dtype=np.float32).reshape(-1)
+            states.append(next_obs_arr)
 
-            # Optional: handle episodic envs
-            if done and hasattr(env, "reset"):
-                reset_out = env.reset()
-                # reset state is usually ignored to keep continuity
+            obs = next_obs
 
-        return np.stack(states, axis=0)  # (T, D)
+            # Episodic env handling
+            if term or trunc:
+                obs, _ = env.reset()
+                states.append(np.asarray(obs, dtype=np.float32).reshape(-1))
+
+        return np.stack(states, axis=0)  # (T_or_more, D)
 
     # -----------------------------
     # Public: build datasets
     # -----------------------------
-    def build(self) -> DatasetSplits:
+    def build(self) -> "DatasetSplits":
         states = self._run_simulator()
 
         if states.ndim != 2:
-            raise ValueError("Simulator must produce (T, D) state array")
+            raise ValueError("Simulator must produce a (T, D) state array.")
+
+        actual_policy = "agent" if self.agent is not None and self.policy == "agent" else "random"
+        agent_name = self._get_agent_name()
 
         raw = TimeSeriesData(
             states=states,
             meta={
-                "source": "network_slicing_simulator",
-                "policy": self.policy,
+                "source": "network_slicing_gym_continuous",
+                "policy": actual_policy,
+                "agent_name": agent_name,
                 "num_steps": self.num_steps,
                 "split": list(self.split),
                 "standardize": self.standardize,
@@ -442,12 +477,10 @@ class SimulatorDataBuilder:
             },
         )
 
-        # contiguous split in physical space
         train_s, val_s, test_s = split_contiguous(
             raw.states, *self.split
         )
 
-        # windowed datasets (+ optional standardization)
         train_ds, val_ds, test_ds, scaler = build_datasets(
             train_s,
             val_s,
@@ -457,7 +490,6 @@ class SimulatorDataBuilder:
             self.standardize,
         )
 
-        # record standardization info for reproducibility
         if scaler is not None:
             raw.meta["train_mean"] = scaler.mean_.tolist()
             raw.meta["train_std"] = scaler.std_.tolist()

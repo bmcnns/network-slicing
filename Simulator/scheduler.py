@@ -1,5 +1,5 @@
 # scheduler.py
-from Simulator.config import Config
+from .config import Config
 
 class RoundRobinScheduler:
     """

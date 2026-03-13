@@ -1,6 +1,6 @@
-from Simulator.scheduler import RoundRobinScheduler
-from Simulator.traffic import TrafficGenerator
-from Simulator.config import Config
+from .scheduler import RoundRobinScheduler
+from .traffic import TrafficGenerator
+from .config import Config
 import numpy as np
 
 class NetworkSlice:

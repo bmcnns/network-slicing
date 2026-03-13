@@ -69,7 +69,7 @@ def train_ppo(
         env,
         verbose=1,
         learning_rate=3e-4,
-        n_steps=2048,
+        n_steps=128,
         batch_size=64,
         n_epochs=10,
         gamma=0.99,
@@ -100,8 +100,28 @@ if __name__ == "__main__":
     #     save_path="models/DQN-Network-Slicing",
     # )
 
-    train_ppo(
-        env_entrypoint=NetworkSlicingGymContinuous,
-        timesteps=10,
-        save_path="models/PPO-Network-Slicing",
-    )
+    # train_ppo(
+    #     env_entrypoint=NetworkSlicingGymContinuous,
+    #     timesteps=10_000,
+    #     save_path="models/PPO-Network-Slicing",
+    # )
+
+    env = NetworkSlicingGymContinuous()
+
+    # 加载训练好的 agent
+    agent = PPO.load("models/PPO-Network-Slicing")
+
+    obs, _ = env.reset()
+
+    for t in range(20):
+
+        action, _ = agent.predict(obs, deterministic=True)
+
+        next_obs, reward, term, trunc, info = env.step(action)
+
+        print("next_obs:", next_obs)
+
+        obs = next_obs
+
+        if term or trunc:
+            obs, _ = env.reset()

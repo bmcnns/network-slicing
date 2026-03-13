@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-
+from stable_baselines3 import PPO
 from StatePredictor.eval_rollout import rollout_t_plus_1, rollout_t_plus_n, save_rollout_result, save_rollout_csv, \
     plot_rollout_overlay, plot_rollout_3d, plot_rollout_4d_color
 from plotting import load_jsonl, plot_all
@@ -256,16 +256,18 @@ def main():
     #     seed=seed,
     #     standardize=standardize,
     # )
-    # builder = SimulatorDataBuilder(
-    #     num_steps=20_000,
-    #     window_size=32,
-    #     stride=1,
-    #     split=(0.7, 0.15, 0.15),
-    #     seed=0,
-    #     standardize=True,
-    #     policy="random",
-    #     meta={"env": "NetworkSlicingEnv"},
-    # )
+
+    builder = SimulatorDataBuilder(
+        num_steps=1000,
+        window_size=32,
+        stride=1,
+        split=(0.7, 0.15, 0.15),
+        seed=0,
+        standardize=True,
+        policy="random",
+        meta={"env": "NetworkSlicingGymContinuous"},
+        agent=None #PPO.load("../Simulator/models/PPO-Network-Slicing")
+    )
     # builder = ChaosDataBuilder(
     #     num_steps=20000,
     #     dt=0.01,
@@ -276,14 +278,14 @@ def main():
     #     noise_std=noise_std,
     #     seed=0,
     # )
-    builder = CSVDataBuilder(
-        csv_path=CSV_PATH,
-        window_size=window_size,
-        stride=stride,
-        split=split,
-        seed=seed,
-        standardize=standardize,
-    )
+    # builder = CSVDataBuilder(
+    #     csv_path=CSV_PATH,
+    #     window_size=window_size,
+    #     stride=stride,
+    #     split=split,
+    #     seed=seed,
+    #     standardize=standardize,
+    # )
 
     splits: DatasetSplits = builder.build()
     splits.save("data")

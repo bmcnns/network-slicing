@@ -1,8 +1,8 @@
 import gymnasium as gym
-from Simulator.environment import NetworkSlicingEnv
-from Simulator.config import Config
+from .environment import NetworkSlicingEnv
+from .config import Config
 import numpy as np
-from Simulator.action import ActionSpace
+from .action import ActionSpace
 from typing import Optional
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -44,13 +44,26 @@ class GnuplotLoggerCallback(BaseCallback):
         info = infos[0]
         reward = self.locals.get("rewards", [0])[0]
 
-        eff = info.get("spectrum_efficiency", 0.0)
+        se   = info.get("spectrum_efficiency", 0.0)
         util = info.get("utility", 0.0)
+        ssr  = info.get("ssr", {s: 0.0 for s in ['VoLTE', 'Video', 'URLLC']})
+        bw   = info.get("bandwidth_allocation", {s: 0.0 for s in ['VoLTE', 'Video', 'URLLC']})
+        arr  = info.get("total_arrived_packets", {s: 0 for s in ['VoLTE', 'Video', 'URLLC']})
+        suc  = info.get("total_successful_packets", {s: 0 for s in ['VoLTE', 'Video', 'URLLC']})
+        drp  = info.get("dropped_packets", {s: 0 for s in ['VoLTE', 'Video', 'URLLC']})
 
-        line = f"{self.num_timesteps} {eff:.6f} {util:.6f} {reward:.6f}\n"
+        slices = ['VoLTE', 'Video', 'URLLC']
+
+        line = (
+            f"{self.num_timesteps} {se:.6f} {util:.6f} {reward:.6f} "
+            f"{ssr['VoLTE']:.4f} {ssr['Video']:.4f} {ssr['URLLC']:.4f} "
+            f"{bw['VoLTE']/1e6:.3f} {bw['Video']/1e6:.3f} {bw['URLLC']/1e6:.3f} "
+            f"{arr['VoLTE']} {arr['Video']} {arr['URLLC']} "
+            f"{suc['VoLTE']} {suc['Video']} {suc['URLLC']} "
+            f"{drp['VoLTE']} {drp['Video']} {drp['URLLC']}\n"
+        )
         self.file.write(line)
 
-        # Flush buffer periodically to prevent data loss
         if self.n_calls % 100 == 0:
             self.file.flush()
 

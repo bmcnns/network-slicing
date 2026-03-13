@@ -1,6 +1,6 @@
 import numpy as np
-from Simulator.config import Config
-from Simulator.packet import Packet
+from .config import Config
+from .packet import Packet
 
 class TrafficGenerator:
     """

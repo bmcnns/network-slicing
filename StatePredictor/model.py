@@ -21,8 +21,8 @@ class LSTMStatePredictor(nn.Module):
     def __init__(
             self,
             input_dim: int,
-            hidden_dim: int = 8, # 64
-            num_layers: int = 1,
+            hidden_dim: int = 8,
+            num_layers: int = 2,
             dropout: float = 0.0,
     ):
         super().__init__()

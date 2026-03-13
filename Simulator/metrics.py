@@ -1,5 +1,5 @@
 import numpy as np
-from Simulator.config import Config
+from .config import Config
 
 class MetricsTracker:
     """
