@@ -1,31 +1,20 @@
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, Tuple
-import numpy as np
 import torch
 import torch.nn as nn
 
 
 class LSTMStatePredictor(nn.Module):
-    """
-    LSTM-based next-state predictor.
-
-    Given a window of past states:
-        x_seq: (B, K, D)
-    predict the next state:
-        y_pred: (B, D)
-
-    This is the standard "state predictor" form used in world-model / digital-twin demos.
-    """
 
     def __init__(
-            self,
-            input_dim: int,
-            hidden_dim: int = 8,
-            num_layers: int = 2,
-            dropout: float = 0.0,
+        self,
+        input_dim: int,
+        hidden_dim: int = 8,
+        num_layers: int = 2,
+        dropout: float = 0.0,
     ):
         super().__init__()
+
         if input_dim <= 0:
             raise ValueError("input_dim must be > 0")
         if hidden_dim <= 0:
@@ -35,13 +24,12 @@ class LSTMStatePredictor(nn.Module):
         if not (0.0 <= dropout < 1.0):
             raise ValueError("dropout must be in [0, 1)")
 
-        # PyTorch applies dropout between LSTM layers only when num_layers > 1
-        lstm_dropout = dropout if num_layers > 1 else 0.0
-
         self.input_dim = int(input_dim)
         self.hidden_dim = int(hidden_dim)
         self.num_layers = int(num_layers)
         self.dropout = float(dropout)
+
+        lstm_dropout = dropout if num_layers > 1 else 0.0
 
         self.lstm = nn.LSTM(
             input_size=self.input_dim,
@@ -51,7 +39,6 @@ class LSTMStatePredictor(nn.Module):
             dropout=lstm_dropout,
         )
 
-        # Optional: a small head to map hidden -> state dim
         self.head = nn.Sequential(
             nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.input_dim),
@@ -60,19 +47,26 @@ class LSTMStatePredictor(nn.Module):
     def forward(self, x_seq: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x_seq: (B, K, D)
+            x_seq: (B, K, input_dim)
 
         Returns:
-            y_pred: (B, D)
+            next_state_pred: (B, input_dim)
         """
+
         if x_seq.ndim != 3:
-            raise ValueError(f"x_seq must have shape (B,K,D), got {tuple(x_seq.shape)}")
-        if x_seq.size(-1) != self.input_dim:
             raise ValueError(
-                f"Last dim of x_seq must be input_dim={self.input_dim}, got {x_seq.size(-1)}"
+                f"x_seq must have shape (B,K,input_dim), got {tuple(x_seq.shape)}"
             )
 
-        out, _ = self.lstm(x_seq)  # out: (B, K, H)
-        last = out[:, -1, :]  # (B, H)
-        y_pred = self.head(last)  # (B, D)
+        if x_seq.size(-1) != self.input_dim:
+            raise ValueError(
+                f"Last dim must be input_dim={self.input_dim}"
+            )
+
+        out, _ = self.lstm(x_seq)
+
+        last = out[:, -1, :]
+
+        y_pred = self.head(last)
+
         return y_pred

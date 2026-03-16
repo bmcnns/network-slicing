@@ -188,12 +188,27 @@ From a single script, it performs:
 python main.py
 ````
 
-This will automatically:
+Paths of run
 
-* Build datasets
-* Train the model
-* Perform t+1 and t+n evaluations
-* Generate all plots
+                 MODE
+
+                   │
+        ┌──────────┼──────────┐
+        │          │          │
+      build      train       eval
+        │          │          │
+        │      ┌───┴─────┐    │
+        │      │         │    │
+        │  rebuild=True  │ rebuild=False
+        │      │         │
+        │      ▼         ▼
+        │   build     load states
+        │      │         │
+        │      ▼         ▼
+        │    train      train
+        │
+        ▼
+  dataset ready
 
 ---
 

@@ -3,34 +3,82 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
-from typing import List, Optional, Tuple
 import logging
-import time
+from dataclasses import asdict, dataclass
+from typing import List, Optional, Tuple, Dict, Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from stable_baselines3 import PPO
-from StatePredictor.eval_rollout import rollout_t_plus_1, rollout_t_plus_n, save_rollout_result, save_rollout_csv, \
-    plot_rollout_overlay, plot_rollout_3d, plot_rollout_4d_color
-from plotting import load_jsonl, plot_all
-from data_builder import TrigonometricDataBuilder, DatasetSplits, Standardizer, \
-    SimulatorDataBuilder, ChaosDataBuilder, CSVDataBuilder
 
+from StatePredictor.eval_rollout import (
+    rollout_t_plus_1,
+    rollout_t_plus_n,
+    save_rollout_result,
+    save_rollout_csv,
+    plot_rollout_overlay,
+    plot_rollout_3d,
+    plot_rollout_4d_color,
+)
+from plotting import load_jsonl, plot_all
+from data_builder import (
+    TrigonometricDataBuilder,
+    DatasetSplits,
+    Standardizer,
+    SimulatorDataBuilder,
+    ChaosDataBuilder,
+    CSVDataBuilder,
+)
 from model import LSTMStatePredictor
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("train")
 
+# =========================================================
+# Global Config
+# =========================================================
+MODE = "eval"  # "build" | "train" | "eval"
+REBUILD_DATA = True  # only meaningful in "train"
 
-# -----------------------------
+DATA_DIR = "data/random_policy_1000steps"
+LOG_PATH = "log/train_log.jsonl"
+MODEL_PATH = "./model_components/lstm_dt.pt"
+SCALER_PATH = "./model_components/standardizer.json"
+EVAL_OUT_DIR = "./eval_outputs"
+
+CSV_PATH = "data/agent.csv"
+SEED = 0
+
+# Data config
+NUM_STEPS = 20_000
+MODE_TRIG = "sin"  # "sin" | "cos" | "both"
+WINDOW_SIZE = 32
+STRIDE = 1
+NOISE_STD = 1
+SPLIT = (0.7, 0.15, 0.15)
+STANDARDIZE = True
+
+# Train config
+EPOCHS = 5000
+BATCH_SIZE = 128
+LR = 1e-3
+MAX_PAIRS = 16
+
+# Model config
+HIDDEN_DIM = 64
+NUM_LAYERS = 1
+DROPOUT = 0.0
+
+# Eval config
+ROLLOUT_LENGTH = 10000
+ROLLOUT_START_T = 0
+
+
+# =========================================================
 # Metrics
-# -----------------------------
+# =========================================================
 def mse_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     return ((y_pred - y_true) ** 2).mean(dim=0)
 
@@ -50,9 +98,9 @@ def to_list(x: torch.Tensor) -> List[float]:
     return x.detach().cpu().float().tolist()
 
 
-# -----------------------------
+# =========================================================
 # Record structure (JSONL)
-# -----------------------------
+# =========================================================
 @dataclass
 class SplitEpochRecord:
     split: str
@@ -71,9 +119,9 @@ class SplitEpochRecord:
     sample_pred: List[List[float]]
 
 
-# -----------------------------
+# =========================================================
 # Train / Eval helpers
-# -----------------------------
+# =========================================================
 def run_train_epoch(
         model: nn.Module,
         loader: DataLoader,
@@ -81,7 +129,7 @@ def run_train_epoch(
         device: torch.device,
         loss_fn: nn.Module,
         epoch: int,
-        log_every: int = 20,  # 每 N 个 batch 打一次
+        log_every: int = 20,
 ) -> float:
     model.train()
     total = 0.0
@@ -134,18 +182,17 @@ def eval_split(
         preds.append(y_pred)
         trues.append(y_true)
 
-    y_pred_all = torch.cat(preds, dim=0)  # (N,D)
-    y_true_all = torch.cat(trues, dim=0)  # (N,D)
+    y_pred_all = torch.cat(preds, dim=0)
+    y_true_all = torch.cat(trues, dim=0)
 
-    # overall MSE
     mse = float(((y_pred_all - y_true_all) ** 2).mean().detach().cpu().item())
 
     mse_d = mse_per_dim(y_pred_all, y_true_all)
     mae_d = mae_per_dim(y_pred_all, y_true_all)
     r2_d = r2_per_dim(y_pred_all, y_true_all)
 
-    rse_d = 1.0 - r2_d  # (D,)
-    rse = float(rse_d.mean().cpu().item())  # overall r2 error
+    rse_d = 1.0 - r2_d
+    rse = float(rse_d.mean().cpu().item())
 
     true_mean = y_true_all.mean(dim=0)
     pred_mean = y_pred_all.mean(dim=0)
@@ -157,14 +204,11 @@ def eval_split(
     return SplitEpochRecord(
         split=split,
         epoch=epoch,
-
         mse=mse,
         mse_per_dim=to_list(mse_d),
         mae_per_dim=to_list(mae_d),
-
         rse=rse,
         r2_per_dim=to_list(r2_d),
-
         true_mean=to_list(true_mean),
         pred_mean=to_list(pred_mean),
         sample_true=sample_true,
@@ -173,6 +217,7 @@ def eval_split(
 
 
 def append_jsonl(path: str, record: SplitEpochRecord) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(record)) + "\n")
 
@@ -202,253 +247,320 @@ def save_lstm_checkpoint(
 
 
 def load_csv_4d(csv_path: str) -> np.ndarray:
-    """
-    CSV 有表头，且只有 4 列纯数值 state。
-    行号 = 时间索引，不需要额外 time 列。
-    """
     states = np.loadtxt(csv_path, delimiter=",", skiprows=1, dtype=np.float32)
     if states.ndim != 2 or states.shape[1] != 4:
         raise ValueError(f"Expected (T,4) after header, got {states.shape}")
     return states
 
-# -----------------------------
-# Main
-# -----------------------------
-def main():
-    # ---------- Config ----------
-    CSV_PATH = "data/agent.csv"  # 改这里random_policy.csv
-    seed = 0
-    torch.manual_seed(seed)
 
+# =========================================================
+# Config / Builders
+# =========================================================
+def get_device() -> torch.device:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Device:{device}")
+    logger.info(f"Device: {device}")
+    return device
 
-    # Data config
-    num_steps = 20_000
-    mode = "sin"  # "sin" | "cos" | "both" only for trig dataset for testing the model
-    window_size = 32
-    stride = 1
-    noise_std = 1
-    split = (0.7, 0.15, 0.15)
-    standardize = True
 
-    # Train config
-    epochs = 1000
-    batch_size = 128
-    lr = 1e-3
-    max_pairs = 16
-    log_path = "log/train_log.jsonl"
+def make_run_cfg(input_dim: int, device: torch.device) -> Dict[str, Any]:
+    return {
+        "seed": SEED,
+        "device": str(device),
 
-    # Model config
-    hidden_dim = 64 # 8
-    num_layers = 1
-    dropout = 0.0
+        "num_steps": NUM_STEPS,
+        "mode": MODE_TRIG,
+        "dt": 0.01,
+        "noise_std": NOISE_STD,
+        "split": SPLIT,
+        "standardize": STANDARDIZE,
 
-    # ---------- Build data ----------
-    # builder = TrigonometricDataBuilder(
-    #     num_steps=num_steps,
-    #     mode=mode,
-    #     dt=0.01,
-    #     window_size=window_size,
-    #     stride=stride,
-    #     noise_std=noise_std,
-    #     split=split,
-    #     seed=seed,
-    #     standardize=standardize,
-    # )
+        "window_size": WINDOW_SIZE,
+        "stride": STRIDE,
 
+        "input_dim": input_dim,
+        "hidden_dim": HIDDEN_DIM,
+        "num_layers": NUM_LAYERS,
+        "dropout": DROPOUT,
+
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "lr": LR,
+        "loss": "MSE",
+
+        "model_path": MODEL_PATH,
+        "log_path": LOG_PATH,
+        "data_dir": DATA_DIR,
+    }
+
+
+def make_builder():
+    """
+    Choose ONE builder here.
+    """
+
+    # -------- Simulator ----------
     builder = SimulatorDataBuilder(
-        num_steps=1000,
-        window_size=32,
-        stride=1,
-        split=(0.7, 0.15, 0.15),
-        seed=0,
-        standardize=True,
+        num_steps=NUM_STEPS,
+        window_size=WINDOW_SIZE,
+        stride=STRIDE,
+        split=SPLIT,
+        seed=SEED,
+        standardize=STANDARDIZE,
         policy="random",
         meta={"env": "NetworkSlicingGymContinuous"},
-        agent=None #PPO.load("../Simulator/models/PPO-Network-Slicing")
+        agent=None,  # PPO.load("../Simulator/models/PPO-Network-Slicing")
     )
-    # builder = ChaosDataBuilder(
+    return builder
+
+    # -------- Trig ----------
+    # return TrigonometricDataBuilder(
+    #     num_steps=NUM_STEPS,
+    #     mode=MODE_TRIG,
+    #     dt=0.01,
+    #     window_size=WINDOW_SIZE,
+    #     stride=STRIDE,
+    #     noise_std=NOISE_STD,
+    #     split=SPLIT,
+    #     seed=SEED,
+    #     standardize=STANDARDIZE,
+    # )
+
+    # -------- Chaos ----------
+    # return ChaosDataBuilder(
     #     num_steps=20000,
     #     dt=0.01,
-    #     window_size=32,
-    #     stride=1,
-    #     split=(0.7, 0.15, 0.15),
-    #     standardize=True,
-    #     noise_std=noise_std,
-    #     seed=0,
+    #     window_size=WINDOW_SIZE,
+    #     stride=STRIDE,
+    #     split=SPLIT,
+    #     standardize=STANDARDIZE,
+    #     noise_std=NOISE_STD,
+    #     seed=SEED,
     # )
-    # builder = CSVDataBuilder(
+
+    # -------- CSV ----------
+    # return CSVDataBuilder(
     #     csv_path=CSV_PATH,
-    #     window_size=window_size,
-    #     stride=stride,
-    #     split=split,
-    #     seed=seed,
-    #     standardize=standardize,
+    #     window_size=WINDOW_SIZE,
+    #     stride=STRIDE,
+    #     split=SPLIT,
+    #     seed=SEED,
+    #     standardize=STANDARDIZE,
     # )
 
+
+def build_data() -> DatasetSplits:
+    logger.info("Building fresh dataset...")
+    builder = make_builder()
     splits: DatasetSplits = builder.build()
-    splits.save("data")
-    input_dim = splits.raw.states.shape[1]
-    logger.info(f"Raw states shape: {splits.raw.states.shape}  (T,D)")
-    logger.info(f"Input dim D = {input_dim}")
+    splits.save(DATA_DIR)
+    logger.info(f"Dataset saved to: {DATA_DIR}")
+    logger.info(f"Raw states shape: {splits.raw.states.shape} (T,D)")
+    return splits
 
-    train_loader = DataLoader(splits.train, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(splits.val, batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(splits.test, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    # ---------- Build model ----------
+def load_data() -> DatasetSplits:
+    logger.info(f"Loading cached dataset from: {DATA_DIR}")
+    splits = DatasetSplits.load(
+        DATA_DIR,
+        window_size=WINDOW_SIZE,
+        stride=STRIDE,
+        split=SPLIT,
+        standardize=STANDARDIZE,
+    )
+    logger.info(f"Loaded states shape: {splits.raw.states.shape} (T,D)")
+    return splits
+
+
+def prepare_data(rebuild: bool = False) -> DatasetSplits:
+    if rebuild:
+        return build_data()
+
+    states_path = os.path.join(DATA_DIR, "states.npy")
+    meta_path = os.path.join(DATA_DIR, "meta.json")
+    if os.path.exists(states_path) and os.path.exists(meta_path):
+        return load_data()
+
+    logger.info("Cached dataset not found. Building fresh dataset instead...")
+    return build_data()
+
+
+def make_loaders(splits: DatasetSplits) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    train_loader = DataLoader(splits.train, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    val_loader = DataLoader(splits.val, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader = DataLoader(splits.test, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    return train_loader, val_loader, test_loader
+
+
+def build_model(input_dim: int, device: torch.device) -> nn.Module:
+    # input dim is state dim + action dim
     model = LSTMStatePredictor(
         input_dim=input_dim,
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        dropout=dropout,
+        hidden_dim=HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        dropout=DROPOUT,
     ).to(device)
+    return model
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+def get_test_states_phys(states_phys: np.ndarray, split: Tuple[float, float, float]) -> np.ndarray:
+    T = states_phys.shape[0]
+    n_train = int(split[0] * T)
+    n_val = int(split[1] * T)
+    test_states_phys = states_phys[n_train + n_val:]
+
+    logger.info(f"train size: {n_train}")
+    logger.info(f"val size:   {n_val}")
+    logger.info(f"test size:  {test_states_phys.shape[0]}")
+    return test_states_phys
+
+
+# =========================================================
+# Build / Train / Eval entry points
+# =========================================================
+def build_main() -> None:
+    _ = build_data()
+    logger.info("Build-only done.")
+
+
+def train_main(rebuild_data: bool = False) -> None:
+    torch.manual_seed(SEED)
+    device = get_device()
+
+    splits = prepare_data(rebuild=rebuild_data)
+    input_dim = splits.raw.states.shape[1]
+    logger.info(f"Input dim D = {input_dim}")
+
+    train_loader, val_loader, test_loader = make_loaders(splits)
+
+    model = build_model(input_dim=input_dim, device=device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = nn.MSELoss()
 
-    # Clear log
-    open(log_path, "w", encoding="utf-8").close()
-    logger.info(f"Logging to:{log_path}")
+    os.makedirs(os.path.dirname(LOG_PATH) or ".", exist_ok=True)
+    open(LOG_PATH, "w", encoding="utf-8").close()
+    logger.info(f"Logging to: {LOG_PATH}")
 
-    # ---------- Train loop ----------
+    for epoch in range(EPOCHS):
+        train_batch_mse = run_train_epoch(
+            model, train_loader, optimizer, device, loss_fn, epoch
+        )
 
-    for epoch in range(epochs):
-        train_batch_mse = run_train_epoch(model, train_loader, optimizer, device, loss_fn, epoch)
+        rec_train = eval_split(model, train_loader, device, "train", epoch, max_pairs=MAX_PAIRS)
+        rec_val = eval_split(model, val_loader, device, "val", epoch, max_pairs=MAX_PAIRS)
+        rec_test = eval_split(model, test_loader, device, "test", epoch, max_pairs=MAX_PAIRS)
 
-        rec_train = eval_split(model, train_loader, device, "train", epoch, max_pairs=max_pairs)
-        rec_val = eval_split(model, val_loader, device, "val", epoch, max_pairs=max_pairs)
-        rec_test = eval_split(model, test_loader, device, "test", epoch, max_pairs=max_pairs)
+        append_jsonl(LOG_PATH, rec_train)
+        append_jsonl(LOG_PATH, rec_val)
+        append_jsonl(LOG_PATH, rec_test)
 
-        append_jsonl(log_path, rec_train)
-        append_jsonl(log_path, rec_val)
-        append_jsonl(log_path, rec_test)
-
-        logger.info({
-            "train_mse": f"{rec_train.mse:.6f}",
-            "val_mse": f"{rec_val.mse:.6f}",
-            "test_mse": f"{rec_test.mse:.6f}",
-        })
-
-        # 控制台也打印一行（可选）
         logger.info(
-            f"Epoch {epoch:03d}/{epochs} | "
+            f"Epoch {epoch:03d}/{EPOCHS} | "
             f"train_mse={rec_train.mse:.6f} (batch_avg={train_batch_mse:.6f}) | "
             f"val_mse={rec_val.mse:.6f} | "
             f"test_mse={rec_test.mse:.6f}"
         )
 
-    logger.info("Done.")
+    logger.info("Training done.")
 
-    # save LSTM model
     save_lstm_checkpoint(
-        path="./model_components/lstm_dt.pt",
+        path=MODEL_PATH,
         model=model,
         input_dim=input_dim,
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        dropout=dropout,
+        hidden_dim=HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        dropout=DROPOUT,
     )
 
-    # ---- build test_states_phys from raw continuous states ----
-    states_phys = splits.raw.states  # (T, D) 期望是“物理空间”的原始连续序列
+    run_cfg = make_run_cfg(input_dim=input_dim, device=device)
+    os.makedirs("./model_components", exist_ok=True)
+    with open("./model_components/run_config.json", "w", encoding="utf-8") as f:
+        json.dump(run_cfg, f, indent=2, ensure_ascii=False)
 
-    T = states_phys.shape[0]
-    n_train = int(split[0] * T)
-    n_val = int(split[1] * T)
-
-    train_states_phys = states_phys[:n_train]
-    val_states_phys = states_phys[n_train:n_train + n_val]
-    test_states_phys = states_phys[n_train + n_val:]
-
-    logger.info(f"train_states_phys: {train_states_phys.shape}")
-    logger.info(f"val_states_phys:   {val_states_phys.shape}")
-    logger.info(f"test_states_phys:  {test_states_phys.shape}")
-
-    # -----------------------------
-    # Collect run config (for reproducibility)
-    # -----------------------------
-    run_cfg = {
-        # ---- experiment ----
-        "seed": seed,
-        "device": str(device),
-
-        # ---- data ----
-        "num_steps": num_steps,
-        "mode": mode,
-        "dt": 0.01,
-        "noise_std": noise_std,
-        "split": split,
-        "standardize": standardize,
-
-        # ---- windowing ----
-        "window_size": window_size,
-        "stride": stride,
-
-        # ---- model ----
-        "input_dim": input_dim,
-        "hidden_dim": hidden_dim,
-        "num_layers": num_layers,
-        "dropout": dropout,
-
-        # ---- training ----
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "lr": lr,
-        "loss": "MSE",
-
-        # ---- artifacts ----
-        "model_path": "./model_components/lstm_dt.pt",
-        "log_path": log_path,
-    }
-
-    return splits, test_states_phys, run_cfg
+    logger.info("Training artifacts saved.")
 
 
-if __name__ == "__main__":
-    splits, test_states_phys, run_cfg = main()
+def eval_main() -> None:
+    device = get_device()
 
-    # ---- training curves ----
-    records = load_jsonl(run_cfg["log_path"])
-    plot_all(records, save=False)
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model checkpoint not found: {MODEL_PATH}")
 
-    # ---- load model ----
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(run_cfg["model_path"], map_location=device)
+    states_path = os.path.join(DATA_DIR, "states.npy")
+    if not os.path.exists(states_path):
+        raise FileNotFoundError(f"Cached states not found: {states_path}")
+
+    ckpt = torch.load(MODEL_PATH, map_location=device)
     cfg = ckpt["model_config"]
 
     model = LSTMStatePredictor(**cfg).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    # ---- load standardizer ----
-    scaler = Standardizer.load("./model_components/standardizer.json")
+    scaler = Standardizer.load(SCALER_PATH)
+    states_phys = np.load(states_path).astype(np.float32, copy=False)
+    test_states_phys = get_test_states_phys(states_phys, SPLIT)
 
-    # ---- rollout params ----
-    K = run_cfg["window_size"]
-    L = 10000
-    start_t = 0
+    K = WINDOW_SIZE
+    L = ROLLOUT_LENGTH
+    start_t = ROLLOUT_START_T
 
-    # ---- t+1 / t+n ----
+    logger.info("Running t+1 rollout...")
     res_t1 = rollout_t_plus_1(
-        model, scaler, test_states_phys,
-        window_size=K, start_t=start_t, length=L, device=device
-    )
-    res_tn = rollout_t_plus_n(
-        model, scaler, test_states_phys,
-        window_size=K, start_t=start_t, length=L, device=device
+        model=model,
+        scaler=scaler,
+        states_phys=test_states_phys,
+        window_size=K,
+        start_t=start_t,
+        length=L,
+        device=device,
     )
 
-    # ---- save + plot ----
-    save_rollout_result(res_t1, out_dir="./eval_outputs", prefix="test")
-    save_rollout_result(res_tn, out_dir="./eval_outputs", prefix="test")
+    logger.info("Running t+n rollout...")
+    res_tn = rollout_t_plus_n(
+        model=model,
+        scaler=scaler,
+        states_phys=test_states_phys,
+        window_size=K,
+        start_t=start_t,
+        length=L,
+        device=device,
+    )
+
+    os.makedirs(EVAL_OUT_DIR, exist_ok=True)
+    save_rollout_result(res_t1, out_dir=EVAL_OUT_DIR, prefix="test")
+    save_rollout_result(res_tn, out_dir=EVAL_OUT_DIR, prefix="test")
 
     plot_rollout_overlay(res_t1, title_prefix="TEST", save_plot=False, smooth_window=20)
     plot_rollout_overlay(res_tn, title_prefix="TEST", save_plot=False, smooth_window=20)
 
     plot_rollout_3d(res_t1, title_prefix="TEST", save_plot=False)
     plot_rollout_3d(res_tn, title_prefix="TEST", save_plot=False)
+
     plot_rollout_4d_color(res_t1)
     plot_rollout_4d_color(res_tn)
 
+    logger.info("Evaluation done.")
+
+
+def plot_logs_main() -> None:
+    if not os.path.exists(LOG_PATH):
+        raise FileNotFoundError(f"Log file not found: {LOG_PATH}")
+    records = load_jsonl(LOG_PATH)
+    plot_all(records, save=False)
+
+
+# =========================================================
+# Main dispatch
+# =========================================================
+if __name__ == "__main__":
+    if MODE == "build":
+        build_main()
+
+    elif MODE == "train":
+        train_main(rebuild_data=REBUILD_DATA)
+
+    elif MODE == "eval":
+        eval_main()
+        plot_logs_main()
+    else:
+        raise ValueError(f"Unknown MODE: {MODE}")

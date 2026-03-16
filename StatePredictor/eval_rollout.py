@@ -404,7 +404,7 @@ def plot_rollout_4d_color(result):
     true = np.asarray(result["true"], dtype=np.float32)
 
     if true.shape[1] < 4:
-        raise ValueError("4D plot requires D >= 4")
+        print("not enough features to plot")
 
     x, y, z, w = true[:, 0], true[:, 1], true[:, 2], true[:, 3]
 

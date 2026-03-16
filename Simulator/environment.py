@@ -310,54 +310,6 @@ class NetworkSlicingEnv:
             for slice_name in Config.SLICE_NAMES:
                 self._transmit_slice(slice_name, slot)
 
-    # def _transmit_slice(self, slice_name, slot):
-    #     """
-    #     Transmit packets for one slice in one slot
-        
-    #     Args:
-    #         slice_name (str): Slice name
-    #         slot (int): Current slot number
-    #     """
-    #     slice_obj = self.slices[slice_name]
-    #     scheduler = slice_obj.scheduler
-        
-    #     # Get next packet to transmit
-    #     packet, dropped_packets = scheduler.get_next_packet(current_slot=slot)
-
-    #     slice_obj.dropped_packets += len(dropped_packets)
-
-    #     if packet is None:
-    #         return  # No packets to transmit
-
-    #     # Mark transmission start
-    #     packet.start_transmission(slot)
-        
-    #     # Get user's channel gain
-    #     user_id = packet.user_id
-    #     channel_gain = self.user_channel_gains[user_id]
-        
-    #     # Calculate per-user power (equal power per user in slice)
-    #     n_users_in_slice = len(slice_obj.user_ids)
-    #     user_power = slice_obj.power / n_users_in_slice if n_users_in_slice > 0 else 0
-        
-    #     # Calculate how many bits can be transmitted this slot
-    #     bits_transmittable = self.channel_model.calculate_transmittable_bits(
-    #         channel_gain,
-    #         user_power,
-    #         slice_obj.bandwidth,
-    #         Config.SLOT_DURATION
-    #     )
-        
-    #     # Transmit bits
-    #     completed_packet = scheduler.transmit(bits_transmittable)
-        
-    #     # If packet completed
-    #     if completed_packet is not None:
-    #         completed_packet.complete_transmission(slot)
-            
-    #         # Record transmitted bits for rate SLA
-    #         self.user_transmitted_bits[user_id] += completed_packet.original_size
-
 
     
     def _transmit_slice(self, slice_name, slot):
@@ -483,26 +435,7 @@ class NetworkSlicingEnv:
                 total_rate += rate
         
         spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
-        
-        # ============ Use only allocated bandwith to calculate SE ========
-        # total_rate = 0
-        # for slice_name in Config.SLICE_NAMES:
-        #     slice_obj = self.slices[slice_name]
-        #     n_users_in_slice = len(slice_obj.user_ids)
-        #     if n_users_in_slice == 0:
-        #         continue
-        #     user_power = slice_obj.power / n_users_in_slice
-        #     for user_id in slice_obj.user_ids:
-        #         if slice_obj.bandwidth <= 0:
-        #             continue
-        #         r_nk = self.channel_model.calculate_shannon_rate(
-        #             self.user_channel_gains[user_id],
-        #             user_power,
-        #             slice_obj.bandwidth
-        #         )
-        #         total_rate += r_nk
 
-        # spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
 
         # Calculate SSR for each slice
         ssrs = {}
@@ -563,44 +496,3 @@ class NetworkSlicingEnv:
         
         return reward
     
-        #  =========== Reward Test 2 =============
-
-        # gamma_t = min(
-        #     Config.GAMMA_MIN + Config.GAMMA_GROWTH_RATE * self.current_step,
-        #     Config.GAMMA_MAX
-        # )
-
-        # if utility < gamma_t:
-        #     reward = utility * 0.1  # Weak signal
-        # else:
-        #     reward = 1.0 + (utility - Config.GAMMA_MAX) / 2.0
-
-        # reward = reward * 10
-
-        # return reward
-    
-        #  =========== Reward Test =============
-        # ssrs = [self.slices[s].get_ssr() for s in Config.SLICE_NAMES]
-        # ssr_volte, ssr_video, ssr_urllc = ssrs
-        
-        # reward = 0
-        
-        # if ssr_volte > 0.90:
-        #     reward += 30
-        # else:
-        #     reward += ssr_volte * 30
-        
-        # if ssr_video > 0.90:
-        #     reward += 30
-        # else:
-        #     reward += ssr_video * 30
-        
-        # if ssr_urllc > 0.05:
-        #     reward += 40
-        # else:
-        #     reward += ssr_urllc * 800
-        
-        # if ssr_volte > 0.90 and ssr_video > 0.90 and ssr_urllc > 0.05:
-        #     reward += 50
-        
-        # return reward
