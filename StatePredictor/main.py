@@ -4,13 +4,10 @@ from __future__ import annotations
 import json
 import os
 import logging
-from dataclasses import asdict, dataclass
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Tuple, Dict, Any
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 from stable_baselines3 import PPO
 
 from StatePredictor.eval_rollout import (
@@ -22,46 +19,48 @@ from StatePredictor.eval_rollout import (
     plot_rollout_3d,
     plot_rollout_4d_color,
 )
-from plotting import load_jsonl, plot_all
-from data_builder import (
-    TrigonometricDataBuilder,
+from StatePredictor.plotting import load_jsonl, plot_all
+from StatePredictor.data_builder import (
     DatasetSplits,
     Standardizer,
     SimulatorDataBuilder,
+    TrigonometricDataBuilder,
     ChaosDataBuilder,
     CSVDataBuilder,
 )
-from model import LSTMStatePredictor
+from StatePredictor.train import train_from_splits, load_trained_model
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger("train")
+logger = logging.getLogger("main")
+
 
 # =========================================================
 # Global Config
 # =========================================================
-MODE = "eval"  # "build" | "train" | "eval"
-REBUILD_DATA = True  # only meaningful in "train"
+MODE = "eval"   # "build" | "train" | "eval"
+REBUILD_DATA = False
 
 DATA_DIR = "data/random_policy_1000steps"
 LOG_PATH = "log/train_log.jsonl"
 MODEL_PATH = "./model_components/lstm_dt.pt"
 SCALER_PATH = "./model_components/standardizer.json"
+RUN_CONFIG_PATH = "./model_components/run_config.json"
 EVAL_OUT_DIR = "./eval_outputs"
 
 CSV_PATH = "data/agent.csv"
 SEED = 0
 
 # Data config
-NUM_STEPS = 20_000
+NUM_STEPS = 200
 MODE_TRIG = "sin"  # "sin" | "cos" | "both"
-WINDOW_SIZE = 32
+WINDOW_SIZE = 1
 STRIDE = 1
 NOISE_STD = 1
 SPLIT = (0.7, 0.15, 0.15)
 STANDARDIZE = True
 
 # Train config
-EPOCHS = 5000
+EPOCHS = 200
 BATCH_SIZE = 128
 LR = 1e-3
 MAX_PAIRS = 16
@@ -74,183 +73,6 @@ DROPOUT = 0.0
 # Eval config
 ROLLOUT_LENGTH = 10000
 ROLLOUT_START_T = 0
-
-
-# =========================================================
-# Metrics
-# =========================================================
-def mse_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
-    return ((y_pred - y_true) ** 2).mean(dim=0)
-
-
-def mae_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
-    return (y_pred - y_true).abs().mean(dim=0)
-
-
-def r2_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    ss_res = ((y_true - y_pred) ** 2).sum(dim=0)
-    mean_true = y_true.mean(dim=0, keepdim=True)
-    ss_tot = ((y_true - mean_true) ** 2).sum(dim=0)
-    return 1.0 - ss_res / (ss_tot + eps)
-
-
-def to_list(x: torch.Tensor) -> List[float]:
-    return x.detach().cpu().float().tolist()
-
-
-# =========================================================
-# Record structure (JSONL)
-# =========================================================
-@dataclass
-class SplitEpochRecord:
-    split: str
-    epoch: int
-
-    mse: float
-    mse_per_dim: List[float]
-    mae_per_dim: List[float]
-    r2_per_dim: List[float]
-    rse: float
-
-    true_mean: List[float]
-    pred_mean: List[float]
-
-    sample_true: List[List[float]]
-    sample_pred: List[List[float]]
-
-
-# =========================================================
-# Train / Eval helpers
-# =========================================================
-def run_train_epoch(
-        model: nn.Module,
-        loader: DataLoader,
-        optimizer: torch.optim.Optimizer,
-        device: torch.device,
-        loss_fn: nn.Module,
-        epoch: int,
-        log_every: int = 20,
-) -> float:
-    model.train()
-    total = 0.0
-    n_batches = 0
-
-    logger.info(f"Train epoch {epoch} start")
-
-    for step, (x_seq, y_true) in enumerate(loader, start=1):
-        x_seq = x_seq.to(device)
-        y_true = y_true.to(device)
-
-        optimizer.zero_grad(set_to_none=True)
-        y_pred = model(x_seq)
-        loss = loss_fn(y_pred, y_true)
-        loss.backward()
-        optimizer.step()
-
-        total += float(loss.detach().cpu().item())
-        n_batches += 1
-
-        if step % log_every == 0:
-            logger.info(
-                f"Train epoch {epoch} | step {step}/{len(loader)} | "
-                f"batch_mse={total / n_batches:.6f}"
-            )
-
-    avg = total / max(n_batches, 1)
-    logger.info(f"Train epoch {epoch} done | avg_mse={avg:.6f}")
-    return avg
-
-
-@torch.no_grad()
-def eval_split(
-        model: nn.Module,
-        loader: DataLoader,
-        device: torch.device,
-        split: str,
-        epoch: int,
-        max_pairs: int = 16,
-) -> SplitEpochRecord:
-    model.eval()
-    preds = []
-    trues = []
-
-    for x_seq, y_true in loader:
-        x_seq = x_seq.to(device)
-        y_true = y_true.to(device)
-        y_pred = model(x_seq)
-
-        preds.append(y_pred)
-        trues.append(y_true)
-
-    y_pred_all = torch.cat(preds, dim=0)
-    y_true_all = torch.cat(trues, dim=0)
-
-    mse = float(((y_pred_all - y_true_all) ** 2).mean().detach().cpu().item())
-
-    mse_d = mse_per_dim(y_pred_all, y_true_all)
-    mae_d = mae_per_dim(y_pred_all, y_true_all)
-    r2_d = r2_per_dim(y_pred_all, y_true_all)
-
-    rse_d = 1.0 - r2_d
-    rse = float(rse_d.mean().cpu().item())
-
-    true_mean = y_true_all.mean(dim=0)
-    pred_mean = y_pred_all.mean(dim=0)
-
-    n = min(max_pairs, y_true_all.shape[0])
-    sample_true = y_true_all[:n].detach().cpu().float().tolist()
-    sample_pred = y_pred_all[:n].detach().cpu().float().tolist()
-
-    return SplitEpochRecord(
-        split=split,
-        epoch=epoch,
-        mse=mse,
-        mse_per_dim=to_list(mse_d),
-        mae_per_dim=to_list(mae_d),
-        rse=rse,
-        r2_per_dim=to_list(r2_d),
-        true_mean=to_list(true_mean),
-        pred_mean=to_list(pred_mean),
-        sample_true=sample_true,
-        sample_pred=sample_pred,
-    )
-
-
-def append_jsonl(path: str, record: SplitEpochRecord) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(asdict(record)) + "\n")
-
-
-def save_lstm_checkpoint(
-        path: str,
-        model: torch.nn.Module,
-        *,
-        input_dim: int,
-        hidden_dim: int,
-        num_layers: int,
-        dropout: float,
-) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-
-    ckpt = {
-        "model_state_dict": model.state_dict(),
-        "model_config": {
-            "input_dim": int(input_dim),
-            "hidden_dim": int(hidden_dim),
-            "num_layers": int(num_layers),
-            "dropout": float(dropout),
-        },
-    }
-    torch.save(ckpt, path)
-    logger.info(f"[INFO] Saved LSTM checkpoint to: {path}")
-
-
-def load_csv_4d(csv_path: str) -> np.ndarray:
-    states = np.loadtxt(csv_path, delimiter=",", skiprows=1, dtype=np.float32)
-    if states.ndim != 2 or states.shape[1] != 4:
-        raise ValueError(f"Expected (T,4) after header, got {states.shape}")
-    return states
 
 
 # =========================================================
@@ -384,24 +206,6 @@ def prepare_data(rebuild: bool = False) -> DatasetSplits:
     return build_data()
 
 
-def make_loaders(splits: DatasetSplits) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    train_loader = DataLoader(splits.train, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-    val_loader = DataLoader(splits.val, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    test_loader = DataLoader(splits.test, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    return train_loader, val_loader, test_loader
-
-
-def build_model(input_dim: int, device: torch.device) -> nn.Module:
-    # input dim is state dim + action dim
-    model = LSTMStatePredictor(
-        input_dim=input_dim,
-        hidden_dim=HIDDEN_DIM,
-        num_layers=NUM_LAYERS,
-        dropout=DROPOUT,
-    ).to(device)
-    return model
-
-
 def get_test_states_phys(states_phys: np.ndarray, split: Tuple[float, float, float]) -> np.ndarray:
     T = states_phys.shape[0]
     n_train = int(split[0] * T)
@@ -427,56 +231,29 @@ def train_main(rebuild_data: bool = False) -> None:
     device = get_device()
 
     splits = prepare_data(rebuild=rebuild_data)
-    input_dim = splits.raw.states.shape[1]
+
+    sample_x, sample_y = splits.train[0]
+    input_dim = int(sample_x.shape[-1])
     logger.info(f"Input dim D = {input_dim}")
 
-    train_loader, val_loader, test_loader = make_loaders(splits)
+    extra_run_cfg = make_run_cfg(input_dim=input_dim, device=device)
 
-    model = build_model(input_dim=input_dim, device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    loss_fn = nn.MSELoss()
-
-    os.makedirs(os.path.dirname(LOG_PATH) or ".", exist_ok=True)
-    open(LOG_PATH, "w", encoding="utf-8").close()
-    logger.info(f"Logging to: {LOG_PATH}")
-
-    for epoch in range(EPOCHS):
-        train_batch_mse = run_train_epoch(
-            model, train_loader, optimizer, device, loss_fn, epoch
-        )
-
-        rec_train = eval_split(model, train_loader, device, "train", epoch, max_pairs=MAX_PAIRS)
-        rec_val = eval_split(model, val_loader, device, "val", epoch, max_pairs=MAX_PAIRS)
-        rec_test = eval_split(model, test_loader, device, "test", epoch, max_pairs=MAX_PAIRS)
-
-        append_jsonl(LOG_PATH, rec_train)
-        append_jsonl(LOG_PATH, rec_val)
-        append_jsonl(LOG_PATH, rec_test)
-
-        logger.info(
-            f"Epoch {epoch:03d}/{EPOCHS} | "
-            f"train_mse={rec_train.mse:.6f} (batch_avg={train_batch_mse:.6f}) | "
-            f"val_mse={rec_val.mse:.6f} | "
-            f"test_mse={rec_test.mse:.6f}"
-        )
-
-    logger.info("Training done.")
-
-    save_lstm_checkpoint(
-        path=MODEL_PATH,
-        model=model,
+    train_from_splits(
+        splits=splits,
+        device=device,
         input_dim=input_dim,
         hidden_dim=HIDDEN_DIM,
         num_layers=NUM_LAYERS,
         dropout=DROPOUT,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        lr=LR,
+        log_path=LOG_PATH,
+        model_path=MODEL_PATH,
+        run_config_path=RUN_CONFIG_PATH,
+        max_pairs=MAX_PAIRS,
+        extra_run_cfg=extra_run_cfg,
     )
-
-    run_cfg = make_run_cfg(input_dim=input_dim, device=device)
-    os.makedirs("./model_components", exist_ok=True)
-    with open("./model_components/run_config.json", "w", encoding="utf-8") as f:
-        json.dump(run_cfg, f, indent=2, ensure_ascii=False)
-
-    logger.info("Training artifacts saved.")
 
 
 def eval_main() -> None:
@@ -489,14 +266,13 @@ def eval_main() -> None:
     if not os.path.exists(states_path):
         raise FileNotFoundError(f"Cached states not found: {states_path}")
 
-    ckpt = torch.load(MODEL_PATH, map_location=device)
-    cfg = ckpt["model_config"]
-
-    model = LSTMStatePredictor(**cfg).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
+    model, cfg = load_trained_model(
+        model_path=MODEL_PATH,
+        device=device,
+    )
 
     scaler = Standardizer.load(SCALER_PATH)
+
     states_phys = np.load(states_path).astype(np.float32, copy=False)
     test_states_phys = get_test_states_phys(states_phys, SPLIT)
 
@@ -533,11 +309,15 @@ def eval_main() -> None:
     plot_rollout_overlay(res_t1, title_prefix="TEST", save_plot=False, smooth_window=20)
     plot_rollout_overlay(res_tn, title_prefix="TEST", save_plot=False, smooth_window=20)
 
-    plot_rollout_3d(res_t1, title_prefix="TEST", save_plot=False)
-    plot_rollout_3d(res_tn, title_prefix="TEST", save_plot=False)
+    state_dim = test_states_phys.shape[1]
 
-    plot_rollout_4d_color(res_t1)
-    plot_rollout_4d_color(res_tn)
+    if state_dim >= 3:
+        plot_rollout_3d(res_t1, title_prefix="TEST", save_plot=False)
+        plot_rollout_3d(res_tn, title_prefix="TEST", save_plot=False)
+
+    if state_dim == 4:
+        plot_rollout_4d_color(res_t1)
+        plot_rollout_4d_color(res_tn)
 
     logger.info("Evaluation done.")
 
@@ -562,5 +342,6 @@ if __name__ == "__main__":
     elif MODE == "eval":
         eval_main()
         plot_logs_main()
+
     else:
         raise ValueError(f"Unknown MODE: {MODE}")

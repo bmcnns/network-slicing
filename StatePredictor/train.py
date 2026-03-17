@@ -1,128 +1,120 @@
-# trainer_min.py
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Tuple, Optional, Any
+import os
+import logging
+from dataclasses import asdict, dataclass
+from typing import List, Dict, Any, Tuple, Optional
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torchmetrics.regression import RelativeSquaredError
 
-# -----------------------------
-# 1) Utils: metrics
-# -----------------------------
+from StatePredictor.data_builder import DatasetSplits
+from StatePredictor.model import LSTMStatePredictor
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("train")
+
+
+# =========================================================
+# Metrics
+# =========================================================
 def mse_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
-    """
-    Per-dimension Mean Squared Error
-    Returns: (D,)
-    """
     return ((y_pred - y_true) ** 2).mean(dim=0)
 
 
 def mae_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
-    """
-    Per-dimension Mean Absolute Error
-    Returns: (D,)
-    """
     return (y_pred - y_true).abs().mean(dim=0)
 
 
-def r2_per_dim(
-    y_pred: torch.Tensor,
-    y_true: torch.Tensor,
-    eps: float = 1e-8,
-) -> torch.Tensor:
-    """
-    Per-dimension R^2 score.
-
-    R^2 = 1 - SS_res / SS_tot
-
-    Returns: (D,)
-    """
-    # residual sum of squares
+def r2_per_dim(y_pred: torch.Tensor, y_true: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     ss_res = ((y_true - y_pred) ** 2).sum(dim=0)
-
-    # total sum of squares
     mean_true = y_true.mean(dim=0, keepdim=True)
     ss_tot = ((y_true - mean_true) ** 2).sum(dim=0)
-
     return 1.0 - ss_res / (ss_tot + eps)
-
-
-def metric_per_dim(
-    y_pred: torch.Tensor,
-    y_true: torch.Tensor,
-    metric: str = "mse",
-) -> torch.Tensor:
-    """
-    Unified per-dimension metric selector.
-
-    metric:
-      - "mse"
-      - "mae"
-      - "r2"
-    """
-    metric = metric.lower()
-
-    if metric == "mse":
-        return mse_per_dim(y_pred, y_true)
-    elif metric == "mae":
-        return mae_per_dim(y_pred, y_true)
-    elif metric in {"r2", "r_squared", "r2_score"}:
-        return r2_per_dim(y_pred, y_true)
-    else:
-        raise ValueError(f"Unknown metric: {metric}")
 
 
 def to_list(x: torch.Tensor) -> List[float]:
     return x.detach().cpu().float().tolist()
 
 
-# -----------------------------
-# 2) Records
-# -----------------------------
-
+# =========================================================
+# Record structure (JSONL)
+# =========================================================
 @dataclass
 class SplitEpochRecord:
-    split: str                 # train/val/test
+    split: str
     epoch: int
-    loss_mse: float            # overall MSE (scalar)
-    mse_per_dim: List[float]   # (D,)
-    mae_per_dim: List[float]   # (D,)
 
-    # true/pred summary (means across all samples)
-    true_mean: List[float]     # (D,)
-    pred_mean: List[float]     # (D,)
+    mse: float
+    mse_per_dim: List[float]
+    mae_per_dim: List[float]
+    r2_per_dim: List[float]
+    rse: float
 
-    # A small sample of true/pred pairs for debugging (first N items)
-    sample_true: List[List[float]]  # (N, D)
-    sample_pred: List[List[float]]  # (N, D)
+    true_mean: List[float]
+    pred_mean: List[float]
+
+    sample_true: List[List[float]]
+    sample_pred: List[List[float]]
 
 
-# -----------------------------
-# 3) One pass: train or eval
-# -----------------------------
+# =========================================================
+# Train / Eval helpers
+# =========================================================
+def run_train_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    loss_fn: nn.Module,
+    epoch: int,
+    log_every: int = 20,
+) -> float:
+    model.train()
+    total = 0.0
+    n_batches = 0
+
+    logger.info(f"Train epoch {epoch} start")
+
+    for step, (x_seq, y_true) in enumerate(loader, start=1):
+        x_seq = x_seq.to(device)
+        y_true = y_true.to(device)
+
+        optimizer.zero_grad(set_to_none=True)
+        y_pred = model(x_seq)
+        loss = loss_fn(y_pred, y_true)
+        loss.backward()
+        optimizer.step()
+
+        total += float(loss.detach().cpu().item())
+        n_batches += 1
+
+        if step % log_every == 0:
+            logger.info(
+                f"Train epoch {epoch} | step {step}/{len(loader)} | "
+                f"batch_mse={total / n_batches:.6f}"
+            )
+
+    avg = total / max(n_batches, 1)
+    logger.info(f"Train epoch {epoch} done | avg_mse={avg:.6f}")
+    return avg
+
 
 @torch.no_grad()
-def _collect_predictions(
+def eval_split(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
-    max_samples_for_pairs: int = 32,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Collect all preds/targets across loader (for metrics + means).
-    Returns:
-      y_pred_all: (N, D)
-      y_true_all: (N, D)
-    """
+    split: str,
+    epoch: int,
+    max_pairs: int = 16,
+) -> SplitEpochRecord:
     model.eval()
     preds = []
     trues = []
+
     for x_seq, y_true in loader:
         x_seq = x_seq.to(device)
         y_true = y_true.to(device)
@@ -134,67 +126,14 @@ def _collect_predictions(
     y_pred_all = torch.cat(preds, dim=0)
     y_true_all = torch.cat(trues, dim=0)
 
-    return y_pred_all, y_true_all
+    mse = float(((y_pred_all - y_true_all) ** 2).mean().detach().cpu().item())
 
-
-def run_one_epoch(
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: Optional[torch.optim.Optimizer],
-    device: torch.device,
-    loss_fn: nn.Module,
-) -> float:
-    """
-    If optimizer is provided -> train mode, else eval-only pass.
-    Returns mean loss over batches.
-    """
-    is_train = optimizer is not None
-    model.train(is_train)
-
-    total_loss = 0.0
-    n_batches = 0
-
-    for x_seq, y_true in loader:
-        x_seq = x_seq.to(device)
-        y_true = y_true.to(device)
-
-        if is_train:
-            optimizer.zero_grad(set_to_none=True)
-
-        y_pred = model(x_seq)
-        loss = loss_fn(y_pred, y_true)
-
-        if is_train:
-            loss.backward()
-            optimizer.step()
-
-        total_loss += float(loss.detach().cpu().item())
-        n_batches += 1
-
-    return total_loss / max(n_batches, 1)
-
-
-def evaluate_and_record(
-    model: nn.Module,
-    loader: DataLoader,
-    device: torch.device,
-    split: str,
-    epoch: int,
-    loss_fn: nn.Module,
-    max_pairs: int = 32,
-) -> SplitEpochRecord:
-    """
-    Compute:
-      - overall mse
-      - mse/mae per dim
-      - true/pred mean vectors
-      - a small sample of true/pred pairs
-    """
-    y_pred_all, y_true_all = _collect_predictions(model, loader, device)
-
-    loss_mse = float(loss_fn(y_pred_all, y_true_all).detach().cpu().item())
     mse_d = mse_per_dim(y_pred_all, y_true_all)
     mae_d = mae_per_dim(y_pred_all, y_true_all)
+    r2_d = r2_per_dim(y_pred_all, y_true_all)
+
+    rse_d = 1.0 - r2_d
+    rse = float(rse_d.mean().cpu().item())
 
     true_mean = y_true_all.mean(dim=0)
     pred_mean = y_pred_all.mean(dim=0)
@@ -206,9 +145,11 @@ def evaluate_and_record(
     return SplitEpochRecord(
         split=split,
         epoch=epoch,
-        loss_mse=loss_mse,
+        mse=mse,
         mse_per_dim=to_list(mse_d),
         mae_per_dim=to_list(mae_d),
+        rse=rse,
+        r2_per_dim=to_list(r2_d),
         true_mean=to_list(true_mean),
         pred_mean=to_list(pred_mean),
         sample_true=sample_true,
@@ -216,73 +157,171 @@ def evaluate_and_record(
     )
 
 
-# -----------------------------
-# 4) Main training loop
-# -----------------------------
+def append_jsonl(path: str, record: SplitEpochRecord) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(asdict(record)) + "\n")
 
-def train_simple(
-    model: nn.Module,
-    train_ds,
-    val_ds,
-    test_ds,
+
+def save_lstm_checkpoint(
+    path: str,
+    model: torch.nn.Module,
     *,
-    device: str = "cpu",
-    epochs: int = 20,
-    batch_size: int = 64,
-    lr: float = 1e-3,
-    num_workers: int = 0,
-    log_path: str = "train_log.jsonl",
-    max_pairs: int = 32,
-) -> List[SplitEpochRecord]:
-    """
-    Simple training pipeline:
-      - trains on train_ds
-      - records train/val/test metrics each epoch
-      - writes JSONL log (one record per split per epoch)
+    input_dim: int,
+    hidden_dim: int,
+    num_layers: int,
+    dropout: float,
+) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 
-    Returns list of records in memory too.
-    """
-    dev = torch.device(device)
-    model.to(dev)
+    ckpt = {
+        "model_state_dict": model.state_dict(),
+        "model_config": {
+            "input_dim": int(input_dim),
+            "hidden_dim": int(hidden_dim),
+            "num_layers": int(num_layers),
+            "dropout": float(dropout),
+        },
+    }
+    torch.save(ckpt, path)
+    logger.info(f"[INFO] Saved LSTM checkpoint to: {path}")
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+def make_loaders(
+    splits: DatasetSplits,
+    *,
+    batch_size: int,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    train_loader = DataLoader(splits.train, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(splits.val, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(splits.test, batch_size=batch_size, shuffle=False, num_workers=0)
+    return train_loader, val_loader, test_loader
+
+
+def build_model(
+    *,
+    input_dim: int,
+    hidden_dim: int,
+    num_layers: int,
+    dropout: float,
+    device: torch.device,
+) -> nn.Module:
+    model = LSTMStatePredictor(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=dropout,
+    ).to(device)
+    return model
+
+
+def train_from_splits(
+    *,
+    splits: DatasetSplits,
+    device: torch.device,
+    input_dim: int,
+    hidden_dim: int,
+    num_layers: int,
+    dropout: float,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    log_path: str,
+    model_path: str,
+    run_config_path: str,
+    max_pairs: int = 16,
+    extra_run_cfg: Optional[Dict[str, Any]] = None,
+) -> Tuple[nn.Module, Dict[str, Any]]:
+    train_loader, val_loader, test_loader = make_loaders(
+        splits,
+        batch_size=batch_size,
+    )
+
+    model = build_model(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=dropout,
+        device=device,
+    )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
-    records: List[SplitEpochRecord] = []
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+    open(log_path, "w", encoding="utf-8").close()
+    logger.info(f"Logging to: {log_path}")
 
-    # overwrite log
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("")
-
-    for epoch in range(1, epochs + 1):
-        # 1) train update pass (loss only)
-        train_loss = run_one_epoch(model, train_loader, optimizer, dev, loss_fn)
-
-        # 2) detailed records for each split (true/pred + per-dim)
-        rec_train = evaluate_and_record(model, train_loader, dev, "train", epoch, loss_fn, max_pairs=max_pairs)
-        rec_val = evaluate_and_record(model, val_loader, dev, "val", epoch, loss_fn, max_pairs=max_pairs)
-        rec_test = evaluate_and_record(model, test_loader, dev, "test", epoch, loss_fn, max_pairs=max_pairs)
-
-        # (optional) keep the simple train pass loss too
-        # Overwrite rec_train.loss_mse? no, keep both if you want
-        # For now we keep rec_train.loss_mse (computed from full set).
-        # If you need batch-avg training loss: print train_loss.
-        print(
-            f"Epoch {epoch:03d} | "
-            f"train_mse={rec_train.loss_mse:.6f} (batch_avg={train_loss:.6f}) | "
-            f"val_mse={rec_val.loss_mse:.6f} | "
-            f"test_mse={rec_test.loss_mse:.6f}"
+    for epoch in range(epochs):
+        train_batch_mse = run_train_epoch(
+            model, train_loader, optimizer, device, loss_fn, epoch
         )
 
-        # 3) write JSONL
-        with open(log_path, "a", encoding="utf-8") as f:
-            for rec in (rec_train, rec_val, rec_test):
-                f.write(json.dumps(asdict(rec)) + "\n")
+        rec_train = eval_split(model, train_loader, device, "train", epoch, max_pairs=max_pairs)
+        rec_val = eval_split(model, val_loader, device, "val", epoch, max_pairs=max_pairs)
+        rec_test = eval_split(model, test_loader, device, "test", epoch, max_pairs=max_pairs)
 
-        records.extend([rec_train, rec_val, rec_test])
+        append_jsonl(log_path, rec_train)
+        append_jsonl(log_path, rec_val)
+        append_jsonl(log_path, rec_test)
 
-    return records
+        logger.info(
+            f"Epoch {epoch:03d}/{epochs} | "
+            f"train_mse={rec_train.mse:.6f} (batch_avg={train_batch_mse:.6f}) | "
+            f"val_mse={rec_val.mse:.6f} | "
+            f"test_mse={rec_test.mse:.6f}"
+        )
+
+    logger.info("Training done.")
+
+    save_lstm_checkpoint(
+        path=model_path,
+        model=model,
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=dropout,
+    )
+
+    run_cfg = {
+        "device": str(device),
+        "input_dim": input_dim,
+        "hidden_dim": hidden_dim,
+        "num_layers": num_layers,
+        "dropout": dropout,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "lr": lr,
+        "loss": "MSE",
+        "model_path": model_path,
+        "log_path": log_path,
+    }
+
+    if extra_run_cfg is not None:
+        run_cfg.update(extra_run_cfg)
+
+    os.makedirs(os.path.dirname(run_config_path) or ".", exist_ok=True)
+    with open(run_config_path, "w", encoding="utf-8") as f:
+        json.dump(run_cfg, f, indent=2, ensure_ascii=False)
+
+    logger.info("Training artifacts saved.")
+
+    return model, run_cfg
+
+
+def load_trained_model(
+    *,
+    model_path: str,
+    device: torch.device,
+) -> Tuple[nn.Module, Dict[str, Any]]:
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
+
+    ckpt = torch.load(model_path, map_location=device)
+    cfg = ckpt["model_config"]
+
+    model = LSTMStatePredictor(**cfg).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    return model, cfg
