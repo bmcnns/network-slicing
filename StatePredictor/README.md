@@ -197,15 +197,15 @@ Paths of run
         │          │          │
       build      train       eval
         │          │          │
-        │      ┌───┴─────┐    │
-        │      │         │    │
-        │  rebuild=True  │ rebuild=False
-        │      │         │
-        │      ▼         ▼
-        │   build     load states
-        │      │         │
-        │      ▼         ▼
-        │    train      train
+        │          │          │
+        │          ▼          │
+        │     rebuild=False
+        │    
+        │            ▼
+        │        load states
+        │            │
+        │            ▼
+        │          train
         │
         ▼
   dataset ready
