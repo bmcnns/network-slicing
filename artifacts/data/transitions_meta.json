@@ -1,0 +1,12 @@
+{
+  "num_transitions": 5000,
+  "state_dim": 3,
+  "action_dim": 3,
+  "reward_dim": 1,
+  "raw_csv": "data\\transitions_raw.csv",
+  "norm_csv": "data\\transitions_norm.csv",
+  "norm_npz": "data\\transitions_norm.npz",
+  "state_standardizer": "data\\state_standardizer.pkl",
+  "reward_standardizer": "data\\reward_standardizer.pkl",
+  "action_standardizer": "data\\action_standardizer.pkl"
+}

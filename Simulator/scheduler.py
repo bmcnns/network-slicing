@@ -1,6 +1,7 @@
 # scheduler.py
 from .config import Config
 
+
 class RoundRobinScheduler:
     """
     Round Robin scheduler for network slicing
@@ -9,7 +10,7 @@ class RoundRobinScheduler:
     Implements per-user FIFO queues with round-robin service across users
     within a slice to ensure fairness.
     """
-    
+
     def __init__(self, slice_name):
         """
         Initialize scheduler
@@ -23,8 +24,8 @@ class RoundRobinScheduler:
         self.user_order = []  # List of user IDs for round robin scheduling
         self.current_user_index = 0  # Index for round-robin user selection
         self.last_served_user = None  # Track last served user for fairness
-        
-        self.dropped_due_to_timeout = 0 
+
+        self.dropped_due_to_timeout = 0
         self.dropped_due_to_overflow = 0
 
     def set_users(self, user_ids):
@@ -36,11 +37,11 @@ class RoundRobinScheduler:
         """
         self.user_order = list(user_ids)
         self.current_user_index = 0
-        
+
         # Create FIFO queue for each user
         for user_id in user_ids:
             self.user_queues[user_id] = []
-    
+
     def enqueue(self, packet):
         """
         Enqueue packet to corresponding user's queue
@@ -52,15 +53,15 @@ class RoundRobinScheduler:
             bool: True if successfully enqueued, False if dropped due to queue overflow
         """
         user_id = packet.user_id
-        
+
         # Check if user's queue has reached maximum capacity
         if len(self.user_queues[user_id]) >= Config.MAX_QUEUE_SIZE:
             self.dropped_due_to_overflow += 1
             return False  # Packet dropped
-        
+
         self.user_queues[user_id].append(packet)
         return True
-    
+
     def check_and_drop_expired(self, current_slot):
         """
         Check all queues and drop packets that have exceeded their deadline.
@@ -72,15 +73,15 @@ class RoundRobinScheduler:
             list: List of dropped Packet objects (for statistics/logging)
         """
         dropped_packets = []
-        
+
         for user_id in self.user_order:
             queue = self.user_queues[user_id]
             valid_packets = []
-            
+
             for packet in queue:
                 # Calculate how long packet has exceeded its deadline
                 slots_overdue = current_slot - packet.deadline
-                
+
                 # Drop only if significantly overdue
                 if slots_overdue > Config.DEADLINE_TOLERANCE:
                     # Deadline violated beyond tolerance - drop packet
@@ -89,12 +90,11 @@ class RoundRobinScheduler:
                 else:
                     # Still valid or within tolerance - keep in queue
                     valid_packets.append(packet)
-            
+
             # Update queue with only valid packets
             self.user_queues[user_id] = valid_packets
-        
-        return dropped_packets
 
+        return dropped_packets
 
     def get_next_packet(self, current_slot):
         """
@@ -129,23 +129,23 @@ class RoundRobinScheduler:
         # No users in this slice
         if len(self.user_order) == 0:
             return None, dropped_in_this_call
-        
+
         # Round-robin: find next user with packets
         attempts = 0
         while attempts < len(self.user_order):
             user_id = self.user_order[self.current_user_index]
-            
+
             # Move to next user for next call (round-robin advancement)
             self.current_user_index = (self.current_user_index + 1) % len(self.user_order)
             attempts += 1
-            
+
             # Select packet from this user if queue non-empty
             while len(self.user_queues[user_id]) > 0:
                 candidate = self.user_queues[user_id][0]
-            
+
                 # Calculate how overdue the candidate packet is
                 slots_overdue = current_slot - candidate.deadline
-            
+
                 # Verify candidate packet hasn't exceeded tolerance
                 if slots_overdue > Config.DEADLINE_TOLERANCE:
                     # Expired beyond tolerance - drop and continue searching
@@ -157,10 +157,10 @@ class RoundRobinScheduler:
                     self.current_packet = self.user_queues[user_id][0]
                     self.last_served_user = user_id
                     return self.current_packet, dropped_in_this_call
-        
+
         # All user queues are empty
         return None, dropped_in_this_call
-    
+
     def transmit(self, bits_transmitted):
         """
         Transmit bits from current packet
@@ -176,25 +176,25 @@ class RoundRobinScheduler:
         """
         if self.current_packet is None:
             return None
-        
+
         # Update packet's remaining bits
         is_complete = self.current_packet.transmit(bits_transmitted)
-        
+
         if is_complete:
             # Packet fully transmitted
             user_id = self.current_packet.user_id
             completed_packet = self.current_packet
-            
+
             # Remove completed packet from user's queue
             if completed_packet in self.user_queues[user_id]:
                 self.user_queues[user_id].remove(completed_packet)
-            
+
             self.current_packet = None
             return completed_packet
-        
+
         # Packet incomplete, will continue in next slot
         return None
-    
+
     def get_queue_length(self):
         """
         Get total queue length across all users
@@ -203,7 +203,7 @@ class RoundRobinScheduler:
             int: Total number of packets queued in this slice
         """
         return sum(len(queue) for queue in self.user_queues.values())
-    
+
     def get_user_queue_length(self, user_id):
         """
         Get queue length for specific user
@@ -215,7 +215,7 @@ class RoundRobinScheduler:
             int: Number of packets in user's queue
         """
         return len(self.user_queues.get(user_id, []))
-    
+
     @property
     def queue(self):
         """
@@ -228,7 +228,7 @@ class RoundRobinScheduler:
         for user_id in self.user_order:
             all_packets.extend(self.user_queues[user_id])
         return all_packets
-    
+
     def clear_all_queues(self):
         """
         Clear all user queues and reset transmission state
@@ -242,7 +242,6 @@ class RoundRobinScheduler:
         # Reset drop statistics
         self.dropped_due_to_timeout = 0
         self.dropped_due_to_overflow = 0
-
 
     def get_drop_statistics(self):
         """

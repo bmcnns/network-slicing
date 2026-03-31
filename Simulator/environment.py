@@ -223,12 +223,12 @@ class NetworkSlicingEnv:
         
         info = metrics
 
-        print(f"Step {self.current_step}:")
-        print(f"  SE: {metrics['spectrum_efficiency']:.6f}")
-        print(f"  SSR: {metrics['ssr']}")
-        print(f"  Utility: {metrics['utility']:.6f}")
-        print(f"  Reward: {reward:.6f}")
-        print(f"  Action: {action}")
+        # print(f"Step {self.current_step}:")
+        # print(f"  SE: {metrics['spectrum_efficiency']:.6f}")
+        # print(f"  SSR: {metrics['ssr']}")
+        # print(f"  Utility: {metrics['utility']:.6f}")
+        # print(f"  Reward: {reward:.6f}")
+        # print(f"  Action: {action}")
         
         return state, reward, term, trunc, info
 
