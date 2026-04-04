@@ -296,6 +296,7 @@ def rollout_t1_sequence(
         "true_rewards": true_reward_out.astype(np.float32),
     }
 
+
     return _attach_rollout_metrics(
         result=result,
         sliding_window=sliding_window,

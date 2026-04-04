@@ -13,11 +13,11 @@ from digital_twin.pipeline import run_collect, run_train, run_rollout, run_plot
 # Global Config
 # =========================================================
 
-MODE = "plot"  # "collect" | "train" | "rollout" | "plot" | "all"
+MODE = "rollout"  # "collect" | "train" | "rollout" | "plot" | "all"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SEED = 0
-
+CONFIG_ID = 9 # todo: update before training
 # -------------------------
 # Data collection
 # -------------------------
@@ -29,9 +29,9 @@ DETERMINISTIC_ACTION = True
 # Paths
 # -------------------------
 DATA_DIR = "artifacts/data"
-MODEL_DIR = "artifacts/checkpoints"
-LOG_DIR = "artifacts/logs"
-PLOT_DIR = "artifacts/plots"
+MODEL_DIR = f"artifacts/config_{CONFIG_ID}/checkpoints"
+LOG_DIR = f"artifacts/config_{CONFIG_ID}/logs"
+PLOT_DIR = f"artifacts/config_{CONFIG_ID}/plots"
 STANDARDIZER_DIR = "artifacts/standardizers"
 
 RAW_CSV_PATH = os.path.join(DATA_DIR, "transitions_raw.csv")
@@ -53,7 +53,7 @@ ROLLOUT_TN_PATH = os.path.join(LOG_DIR, "sequence_rollout_tn.npz")
 # Sequence Dataloader
 # -------------------------
 SEQ_LEN = 64
-STRIDE = 64
+STRIDE = 32
 TRAIN_RATIO = 0.8
 BATCH_SIZE = 16
 SHUFFLE = False
@@ -73,7 +73,7 @@ REWARD_MLP_HIDDEN_DIMS = (128, 64)
 # -------------------------
 # Train
 # -------------------------
-EPOCHS = 100000
+EPOCHS = 1000
 LR = 1e-3
 GRAD_CLIP_NORM = 1.0
 

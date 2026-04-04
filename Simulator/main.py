@@ -108,18 +108,19 @@ if __name__ == "__main__":
 
     env = NetworkSlicingGymContinuous()
 
-    # 加载训练好的 agent
-    agent = PPO.load("models/PPO-Network-Slicing")
+    # load trained agent
+    agent = PPO.load("models/PPO-Network-Slicing", device='cpu')
 
     obs, _ = env.reset()
 
     for t in range(20):
 
+        action = env.action_space.sample()
         action, _ = agent.predict(obs, deterministic=True)
 
         next_obs, reward, term, trunc, info = env.step(action)
 
-        print("next_obs:", next_obs)
+        print(next_obs, reward, action)
 
         obs = next_obs
 

@@ -229,7 +229,7 @@ class NetworkSlicingEnv:
         # print(f"  Utility: {metrics['utility']:.6f}")
         # print(f"  Reward: {reward:.6f}")
         # print(f"  Action: {action}")
-        
+
         return state, reward, term, trunc, info
 
     def _process_action(self, action):

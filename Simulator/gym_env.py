@@ -1,8 +1,8 @@
 import gymnasium as gym
-from .environment import NetworkSlicingEnv
-from .config import Config
+from Simulator.environment import NetworkSlicingEnv
+from Simulator.config import Config
 import numpy as np
-from .action import ActionSpace
+from Simulator.action import ActionSpace
 from typing import Optional
 from stable_baselines3.common.callbacks import BaseCallback
 
