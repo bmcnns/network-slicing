@@ -1,0 +1,12 @@
+{
+  "num_transitions": 50000,
+  "state_dim": 3,
+  "action_dim": 3,
+  "reward_dim": 1,
+  "raw_csv": "artifacts/versions\\20260404_074713\\data\\transitions_raw.csv",
+  "norm_csv": "artifacts/versions\\20260404_074713\\data\\transitions_norm.csv",
+  "norm_npz": "artifacts/versions\\20260404_074713\\data\\transitions_norm.npz",
+  "state_standardizer": "artifacts/versions\\20260404_074713\\data\\state_standardizer.pkl",
+  "reward_standardizer": "artifacts/versions\\20260404_074713\\data\\reward_standardizer.pkl",
+  "action_standardizer": "artifacts/versions\\20260404_074713\\data\\action_standardizer.pkl"
+}

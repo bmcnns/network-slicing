@@ -181,40 +181,47 @@ Key points:
 
 ## 8. Current Limitations (IMPORTANT)
 
-### 1. Policy Sensitivity
+### 1. Data Collection Distribution
 
-The DT is currently **sensitive to the data collection policy**.
+The DT is sensitive to the **distribution of collected training data**.
 
 Observed behavior:
 
-* Works well when:
+* When the dataset is collected mainly with **PPO actions**, the trained DT works well under PPO-like interaction, but generalization to very different actions can be weak.
+* When the dataset is collected using a **random policy**, the trained DT shows much better robustness.
+* A DT trained on random-policy data can still interact normally with a **PPO policy agent**.
 
-  * Training policy ≈ testing policy (e.g., PPO → PPO)
-* Breaks when:
+Interpretation:
 
-  * Testing uses very different actions (e.g., random)
-  * Not yet tested random to random
-
-Reason:
-
-* Dataset does not cover full action space
-* Model learns **policy-induced distribution**, not full dynamics
+* The main issue is not simply “policy sensitivity” of the model itself.
+* The more likely cause is **insufficient state-action coverage** in the training dataset.
+* PPO-collected data appears to be narrower and more policy-specific, while random collection provides broader coverage of the action space.
 
 ---
 
 ### 2. Action Distribution Coverage
 
-Current dataset:
-
-* Mostly generated using PPO
+Current findings suggest that **data coverage matters more than the specific policy label**.
 
 Problem:
 
-* Limited exploration of state-action space
+* PPO-based collection may explore only a limited region of the state-action space.
+* This can make the learned DT accurate mainly near the PPO-induced trajectory distribution.
 
 Consequence:
 
-* Poor generalization to unseen actions
+* Generalization to unseen or weakly covered actions may degrade.
+* Broader exploration during collection leads to a more robust DT.
+
+Current status:
+
+* Random-policy collection currently produces better overall behavior than expected.
+* More systematic comparison is still needed:
+
+  * PPO → PPO
+  * PPO → random
+  * random → random
+  * random → PPO
 
 ---
 
@@ -226,11 +233,12 @@ Current setup assumes:
 
 If you want to replace the simulator:
 
-👉 Simply replace the simulator code in `dataset.py`
+Replace the simulator code in `dataset.py`.
 
-No other module needs modification.
+No other module should require modification, as the rest of the pipeline is already modularized.
 
 ---
+
 
 ## 9. Key Design Decisions
 
