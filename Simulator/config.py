@@ -4,11 +4,14 @@ class Config:
     # ============================================
     # Cell and Users
     # ============================================
-    N_USERS = 180  # Total number of users
+    # N_USERS = 100  # Total number of users
     CELL_RADIUS = 40  # meters
     MIN_DISTANCE = 1
     N_SLICES = 3  # VoLTE, Video, URLLC
-    SLICE_USER_COUNTS = [100, 50, 30]
+    # SLICE_USER_COUNTS = [20, 50, 30]
+
+    N_USERS = 100  # Total number of users
+    SLICE_USER_COUNTS = [46, 46, 8]
 
     # Initial user distribution per slice (will be randomly generated)
     # Example: [30, 50, 20] means 30 VoLTE, 50 Video, 20 URLLC
@@ -39,6 +42,8 @@ class Config:
     MIN_DISTANCE = 35  # meters (model validity)
     CARRIER_FREQ = 2.0e9  # 2 GHz
     
+    SHADOWING_STD_DB = 8.0  # dB
+
     # Power parameters
     P_TOTAL_DBM = 46  # dBm = 40W (macro BS)
     P_TOTAL_W = 10 ** ((P_TOTAL_DBM - 30) / 10)  # Convert to Watts
@@ -57,36 +62,74 @@ class Config:
     # ============================================
     
     # VoLTE - Uniform distribution
-    VOLTE_MIN_INTERVAL = 1  # slots (20 ms)
-    VOLTE_MAX_INTERVAL = 3 # slots (40 ms)
-    VOLTE_PACKET_SIZE = 1020  # bits
-    
+    # VOLTE_MIN_INTERVAL = 10  # slots (20 ms)
+    # VOLTE_MAX_INTERVAL = 20 # slots (40 ms)
+    # heavy
+    # VOLTE_MIN_INTERVAL = 3
+    # VOLTE_MAX_INTERVAL = 6
+
+    VOLTE_MIN_INTERVAL = 0
+    VOLTE_MAX_INTERVAL = 320
+    # VOLTE_PACKET_SIZE = 1020  # bits
+    VOLTE_PACKET_SIZE = 320  # bits
+
     # Video - Truncated Exponential distribution
-    VIDEO_LAMBDA = 2  # arrival rate parameter
-    VIDEO_MAX_INTERVAL = 40  # slots (50 ms) - truncation limit
-    VIDEO_PACKET_SIZE = 1280  # bits
+    # VIDEO_LAMBDA = 0.3  # arrival rate parameter
+    # VIDEO_LAMBDA = 0.6
+    # VIDEO_MAX_INTERVAL = 40  # slots (50 ms) - truncation limit
+    # VIDEO_PACKET_SIZE = 1280  # bits
     
+    VIDEO_LAMBDA = 1.2
+    VIDEO_MAX_INTERVAL = 25
+    VIDEO_PACKET_SIZE = 800  # bits
+
     # URLLC - Exponential distribution
-    URLLC_LAMBDA = 4  # arrival rate parameter
-    URLLC_PACKET_SIZE = 500  # bits
+    # URLLC_LAMBDA = 1.0  # arrival rate parameter
+    # # URLLC_LAMBDA = 2.0
+    # URLLC_PACKET_SIZE = 500  # bits
+    # # URLLC_PACKET_SIZE = 2000  # bits
+
+    URLLC_LAMBDA = 1/360
+    URLLC_PACKET_SIZE = 51200  # bits
 
     # ============================================
     # SLA Requirements (from paper Table I)
     # ============================================
-    # Rate requirements (bits per second) for per user
+    
+    # Rate requirements (bits per second) for per slice
     RATE_SLA = {
-        'VoLTE': 0.05e6,
-        'Video': 0.025e6,
-        'URLLC': 0.015e6
+       'VoLTE': 51e3,
+       'Video': 100e6,
+       'URLLC': 10e6
     }
+
+    # Rate requirements (bits per second) for per user
+    # RATE_SLA = {
+    #     'VoLTE': 0.05e6,
+    #     'Video': 0.025e6,
+    #     'URLLC': 0.015e6
+    # }
+
+    # # RATE_SLA = {
+    # #     'VoLTE': 0.005e6,
+    # #     'Video': 0.01e6,
+    # #     'URLLC': 0.05e6
+    # # }
 
     
     # Latency requirements (in slots)
     LATENCY_SLA = {
-        'VoLTE': 40,
-        'Video': 40,
-        'URLLC': 30
+        'VoLTE': 20,   # 10 ms = 20 slots
+        'Video': 20,   # 10 ms = 20 slots
+        'URLLC': 2     # 1 ms = 2 slots
     }
+
+
+    # LATENCY_SLA = {
+    #     'VoLTE': 40,
+    #     'Video': 40,
+    #     'URLLC': 30
+    # }
     
     # ============================================
     # Queue Parameters
@@ -115,13 +158,13 @@ class Config:
     BETA = [3.0, 2.0, 5.0]  # Weights for SSR of each slice
     
     # Reward shaping parameters (from paper equation 6)
-    # GAMMA_MIN = 4.5
-    # GAMMA_MAX = 6.5
-    # GAMMA_GROWTH_RATE = 0.0001  # Per step
-
-    GAMMA_MIN = 0.6
-    GAMMA_MAX = 2.0
+    GAMMA_MIN = 4.5
+    GAMMA_MAX = 6.5
     GAMMA_GROWTH_RATE = 0.0001  # Per step
+
+    # GAMMA_MIN = 0.6
+    # GAMMA_MAX = 2.0
+    # GAMMA_GROWTH_RATE = 0.0001  # Per step
 
     
     # ============================================

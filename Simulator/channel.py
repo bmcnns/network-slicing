@@ -46,6 +46,22 @@ class ChannelModel:
         channel_gain = 10 ** (-path_loss_db / 10)
         return channel_gain
     
+    def calculate_channel_gain_with_shadowing(self, distance, shadowing_db):
+        """
+        Calculate channel gain including path loss and shadowing (Hua et al. g_un)
+        g_un = path_loss_gain * 10^(S/10),  S ~ N(0, SHADOWING_STD_DB²)
+ 
+        Args:
+            distance (float): Distance in meters
+            shadowing_db (float): Shadowing sample in dB, drawn from N(0, σ²)
+ 
+        Returns:
+            float: Channel gain including path loss and shadowing (linear)
+        """
+        path_loss_db = self.calculate_path_loss(distance)
+        total_loss_db = path_loss_db - shadowing_db  # shadowing_db > 0 means less loss
+        return 10 ** (-total_loss_db / 10)
+    
     def calculate_snr(self, channel_gain, tx_power, bandwidth):
         """
         Calculate Signal-to-Noise Ratio
@@ -82,6 +98,34 @@ class ChannelModel:
         snr = self.calculate_snr(channel_gain, tx_power, bandwidth)
         rate = bandwidth * np.log2(1 + snr)
         return rate
+    
+    def apply_rayleigh_fading(self, path_loss_gain, random_state):
+        """
+        Apply Rayleigh fast fading on top of path loss
+                
+        Args:
+            path_loss_gain (float): Static path-loss channel gain
+            random_state (np.random.RandomState): RNG for reproducibility
+            
+        Returns:
+            float: Instantaneous channel gain including fading
+        """
+        h = random_state.exponential(1.0)   # Rayleigh power ~ Exp(1)
+        return path_loss_gain * h
+ 
+    def apply_rayleigh_fading_batch(self, path_loss_gains, random_state):
+        """
+        Vectorised version: apply independent Rayleigh fading to all users.
+        
+        Args:
+            path_loss_gains (np.ndarray): Static path-loss gains, shape (N,)
+            random_state (np.random.RandomState): RNG
+            
+        Returns:
+            np.ndarray: Instantaneous gains, shape (N,)
+        """
+        h = random_state.exponential(1.0, size=len(path_loss_gains))
+        return path_loss_gains * h
     
     def calculate_transmittable_bits(self, channel_gain, tx_power, 
                                     bandwidth, duration):

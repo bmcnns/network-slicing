@@ -158,7 +158,7 @@ class NetworkSlicingGymContinuous(gym.Env):
 
         self.observation_space = gym.spaces.Box(
             low=0.0, 
-            high=1000.0,
+            high=100000.0,
             shape=(3,), 
             dtype=np.float32
         )
