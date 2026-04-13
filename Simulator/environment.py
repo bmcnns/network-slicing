@@ -336,67 +336,11 @@ class NetworkSlicingEnv:
             for slice_name in Config.SLICE_NAMES:
                 self._transmit_slice(slice_name, slot)
 
-<<<<<<< HEAD:Simulator/environment.py
-
-    
-=======
         # After all slots: compute per-user average Shannon rate
         for uid in range(self.n_users):
             self.user_avg_shannon_rate[uid] = (
                 self.user_shannon_rate_sum[uid] / Config.SLOTS_PER_STEP
             )
-
-    '''
-    def _transmit_slice(self, slice_name, slot):
-        """
-        Transmit packets for one slice in one slot
-        
-        Args:
-            slice_name (str): Slice name
-            slot (int): Current slot number
-        """
-        slice_obj = self.slices[slice_name]
-        scheduler = slice_obj.scheduler
-        
-        # Get next packet to transmit
-        packet, dropped_packets = scheduler.get_next_packet(current_slot=slot)
-
-        slice_obj.dropped_packets += len(dropped_packets)
-
-        if packet is None:
-            return  # No packets to transmit
-
-        # Mark transmission start
-        packet.start_transmission(slot)
-        
-        # Get user's channel gain
-        user_id = packet.user_id
-        channel_gain = self.user_channel_gains[user_id]
-        
-        # Calculate per-user power (equal power per user in slice)
-        n_users_in_slice = len(slice_obj.user_ids)
-        user_power = slice_obj.power / n_users_in_slice if n_users_in_slice > 0 else 0
-        
-        # Calculate how many bits can be transmitted this slot
-        bits_transmittable = self.channel_model.calculate_transmittable_bits(
-            channel_gain,
-            user_power,
-            slice_obj.bandwidth,
-            Config.SLOT_DURATION
-        )
-        
-        # Transmit bits
-        completed_packet = scheduler.transmit(bits_transmittable)
-        
-        # If packet completed
-        if completed_packet is not None:
-            completed_packet.complete_transmission(slot)
-            
-            # Record transmitted bits for rate SLA
-            self.user_transmitted_bits[user_id] += completed_packet.original_size
-    '''
-
->>>>>>> c967e10 (network simulator v2):environment.py
     def _transmit_slice(self, slice_name, slot):
         """
         Transmit packets for one slice in one slot.
@@ -507,34 +451,9 @@ class NetworkSlicingEnv:
             dict: Performance metrics
         """
         # Calculate Spectrum Efficiency (SE)
-
-        # =========== Use actual throughput to calcualte SE ========
-<<<<<<< HEAD:Simulator/environment.py
-        total_rate = 0
-        for slice_name in Config.SLICE_NAMES:
-            slice_obj = self.slices[slice_name]
-            for user_id in slice_obj.user_ids:
-                bits_transmitted = self.user_transmitted_bits[user_id]
-                rate = bits_transmitted / Config.STEP_DURATION
-                total_rate += rate
-        
-        spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
-
-=======
-        # total_rate = 0
-        # for slice_name in Config.SLICE_NAMES:
-        #     slice_obj = self.slices[slice_name]
-        #     for user_id in slice_obj.user_ids:
-        #         bits_transmitted = self.user_transmitted_bits[user_id]
-        #         rate = bits_transmitted / Config.STEP_DURATION
-        #         total_rate += rate
-        
-        # spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
-        
         # ============ Use Shannon Rate to calculate SE ========
         total_rate = sum(self.user_avg_shannon_rate[uid] for uid in range(self.n_users))
         spectrum_efficiency = total_rate / Config.TOTAL_BANDWIDTH
->>>>>>> c967e10 (network simulator v2):environment.py
 
         # Calculate SSR for each slice
         ssrs = {}

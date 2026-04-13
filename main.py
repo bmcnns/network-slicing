@@ -58,7 +58,6 @@ TRAIN_RATIO = 0.8
 BATCH_SIZE = 16
 SHUFFLE = False
 
-<<<<<<< HEAD
 # -------------------------
 # Sequence Model
 # -------------------------
@@ -66,23 +65,6 @@ STATE_HIDDEN_DIM = 64
 STATE_NUM_LAYERS = 1
 STATE_DROPOUT = 0.0
 STATE_USE_ACTION = True  # only for state predictor
-=======
-    model = PPO(
-        "MlpPolicy",
-        env,
-        verbose=1,
-        learning_rate=3e-4,
-        n_steps=128,
-        batch_size=64,
-        n_epochs=5,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-    )
->>>>>>> c967e10 (network simulator v2)
 
 REWARD_HIDDEN_DIM = 64
 REWARD_NUM_LAYERS = 1
@@ -116,7 +98,6 @@ PLOT_SMOOTH_WINDOW = 20
 # =========================================================
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     if MODE == "collect":
         run_collect(
             data_dir=DATA_DIR,
@@ -154,19 +135,6 @@ if __name__ == "__main__":
             lr=LR,
             grad_clip_norm=GRAD_CLIP_NORM,
         )
-=======
-    # train_dqn(
-    #     env_entrypoint=NetworkSlicingGym,
-    #     timesteps=1_000,
-    #     save_path="models/DQN-Network-Slicing",
-    # )
-
-    # train_dqn(
-    #     env_entrypoint=NetworkSlicingGymDiscrete,
-    #     timesteps=10_000,
-    #     save_path="models/DQN-Network-Slicing",
-    # )
->>>>>>> c967e10 (network simulator v2)
 
     elif MODE == "rollout":
         run_rollout(

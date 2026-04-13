@@ -456,6 +456,27 @@ class DigitalTwinEnv(gym.Env):
             raise RuntimeError("normalized_input=True but action standardizer is not loaded.")
         return self.action_standardizer.transform(action_chunk).astype(np.float32)
 
+    @staticmethod
+    def _normalize_action_ratio(action: np.ndarray) -> np.ndarray:
+        action = np.asarray(action, dtype=np.float32)
+        action = np.maximum(action, 0.0)
+
+        total = float(action.sum())
+        if total > 0.0:
+            return (action / total).astype(np.float32)
+
+        return np.full_like(action, 1.0 / action.shape[0], dtype=np.float32)
+
+    def _normalize_action_sequence(self, actions: np.ndarray) -> np.ndarray:
+        actions = np.asarray(actions, dtype=np.float32)
+        if actions.ndim != 2:
+            raise ValueError("actions must have shape (T, action_dim)")
+
+        return np.stack(
+            [self._normalize_action_ratio(action) for action in actions],
+            axis=0,
+        ).astype(np.float32)
+
     def _state_from_model_space(self, state_chunk: np.ndarray) -> np.ndarray:
         state_chunk = np.asarray(state_chunk, dtype=np.float32)
         if not self.normalized_input:
@@ -555,6 +576,8 @@ class DigitalTwinEnv(gym.Env):
                 raise ValueError(
                     f"initial_action_sequence must have shape ({self.seq_len}, {self.action_dim}) or ({hist_len}, {self.action_dim})"
                 )
+            if not action_is_normalized:
+                action_seq = self._normalize_action_sequence(action_seq)
             self.action_buffer = self._action_to_model_space(
                 action_seq,
                 already_in_model_space=action_is_normalized,
@@ -588,7 +611,8 @@ class DigitalTwinEnv(gym.Env):
         if action.shape[0] != int(self.action_dim):
             raise ValueError(f"action must have shape ({self.action_dim},), got {action.shape}")
 
-        action_model = self._action_to_model_space(action)
+        applied_action = self._normalize_action_ratio(action)
+        action_model = self._action_to_model_space(applied_action)
 
         # Online equivalent of rollout_tn_sequence:
         # state_chunk = last seq_len states
@@ -625,6 +649,7 @@ class DigitalTwinEnv(gym.Env):
         terminated = False
         truncated = False
         info = {
+            "applied_action_ratio": applied_action.astype(np.float32),
             "pred_next_model": pred_next_model.astype(np.float32),
             "pred_reward_model": float(pred_reward_model),
             "state_chunk_model": state_chunk_model.copy(),

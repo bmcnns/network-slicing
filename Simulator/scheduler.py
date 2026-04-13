@@ -94,11 +94,7 @@ class RoundRobinScheduler:
             # Update queue with only valid packets
             self.user_queues[user_id] = valid_packets
 
-<<<<<<< HEAD:Simulator/scheduler.py
         return dropped_packets
-
-=======
->>>>>>> c967e10 (network simulator v2):scheduler.py
     def get_next_packet(self, current_slot):
         """
         Select next packet for transmission using round-robin scheduling

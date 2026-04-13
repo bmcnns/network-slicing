@@ -1,8 +1,8 @@
 import gymnasium as gym
-from Simulator.environment import NetworkSlicingEnv
-from Simulator.config import Config
+from .environment import NetworkSlicingEnv
+from .config import Config
 import numpy as np
-from Simulator.action import ActionSpace
+from .action import ActionSpace
 from typing import Optional
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -171,6 +171,17 @@ class NetworkSlicingGymContinuous(gym.Env):
             dtype=np.float32
         )
 
+    @staticmethod
+    def _normalize_action_ratio(action):
+        action = np.array(action, dtype=np.float32)
+        action = np.maximum(action, 0.0)
+
+        action_sum = action.sum()
+        if action_sum > 0:
+            return action / action_sum
+
+        return np.array([1 / 3, 1 / 3, 1 / 3], dtype=np.float32)
+
     def reset(self, seed=None, options=None):
         """Reset environment"""
         if seed is not None:
@@ -182,21 +193,18 @@ class NetworkSlicingGymContinuous(gym.Env):
 
     def step(self, action):
         # Normalize action to ensure sum equals 1.0
-        action = np.array(action, dtype=np.float32)
-        action = np.maximum(action, 0.0)  # Ensure non-negative
-        
-        action_sum = action.sum()
-        if action_sum > 0:
-            action = action / action_sum  # Normalize to sum=1
-        else:
-            action = np.array([1/3, 1/3, 1/3], dtype=np.float32)  # Default: equal split
-        
+        action = self._normalize_action_ratio(action)
+
         # Scale to 20 MHz total bandwidth
         action_mhz = action * 20.0
         
         # Execute step
         obs, rew, term, trunc, info = self.environment.step(action_mhz)
         obs = np.array(obs, dtype=np.float32)
+
+        info = dict(info)
+        info["applied_action_ratio"] = action.copy()
+        info["applied_action_mhz"] = action_mhz.copy()
         
         # Periodic logging
         if self.environment.current_step % 100 == 0:

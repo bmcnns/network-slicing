@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 
-from Simulator.gym_env import NetworkSlicingGymContinuous
+from simulator.gym_env import NetworkSlicingGymContinuous
 from digital_twin.standardizer import Standardizer
 
 
@@ -67,11 +67,14 @@ def collect_transitions(
 
         action = ensure_1d_float_array(action)
 
-        next_obs, reward, terminated, truncated, _ = env.step(action)
+        next_obs, reward, terminated, truncated, info = env.step(action)
         next_state = ensure_1d_float_array(next_obs)
+        applied_action = ensure_1d_float_array(
+            info.get("applied_action_ratio", action)
+        )
 
         states.append(state)
-        actions.append(action)
+        actions.append(applied_action)
         rewards.append([float(reward)])
         next_states.append(next_state)
 
