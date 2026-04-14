@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import torch
+import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -105,9 +106,15 @@ CONFIG_LABELS: Dict[str, str] = {
 
 
 class PhaseStatsCallback(BaseCallback):
-    def __init__(self, curve_logger: "RoundCurveLogger", verbose: int = 0):
+    def __init__(
+        self,
+        curve_logger: "RoundCurveLogger",
+        step_logger: "StepTraceLogger | None" = None,
+        verbose: int = 0,
+    ):
         super().__init__(verbose)
         self.curve_logger = curve_logger
+        self.step_logger = step_logger
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [{}])
@@ -120,6 +127,13 @@ class PhaseStatsCallback(BaseCallback):
             reward=reward,
             utility=float(info.get("utility", 0.0)),
         )
+
+        if self.step_logger is not None:
+            self.step_logger.log_step(
+                info=info,
+                reward=reward,
+                global_step=self.num_timesteps,
+            )
         return True
 
 
@@ -159,6 +173,46 @@ class RoundCurveLogger:
         self.round_reward_sum = 0.0
         self.round_utility_sum = 0.0
         self.round_steps = 0
+
+
+class StepTraceLogger:
+    def __init__(self, output_path: str):
+        self.output_path = output_path
+        with open(self.output_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                "step "
+                "s0 s1 s2 "
+                "a0 a1 a2 "
+                "reward utility "
+                "ns0 ns1 ns2\n"
+            )
+
+    @staticmethod
+    def _as_triplet(value) -> np.ndarray:
+        if value is None:
+            return np.array([np.nan, np.nan, np.nan], dtype=np.float32)
+
+        arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        if arr.size < 3:
+            padded = np.full(3, np.nan, dtype=np.float32)
+            padded[:arr.size] = arr
+            return padded
+        return arr[:3]
+
+    def log_step(self, *, info: Dict[str, Any], reward: float, global_step: int) -> None:
+        state = self._as_triplet(info.get("current_state"))
+        action = self._as_triplet(info.get("applied_action_ratio"))
+        next_state = self._as_triplet(info.get("next_state"))
+        utility = float(info.get("utility", 0.0))
+
+        with open(self.output_path, "a", encoding="utf-8") as handle:
+            handle.write(
+                f"{global_step} "
+                f"{state[0]:.6f} {state[1]:.6f} {state[2]:.6f} "
+                f"{action[0]:.6f} {action[1]:.6f} {action[2]:.6f} "
+                f"{reward:.6f} {utility:.6f} "
+                f"{next_state[0]:.6f} {next_state[1]:.6f} {next_state[2]:.6f}\n"
+            )
 
 
 class NullCallback(BaseCallback):
@@ -262,6 +316,7 @@ def train_bootstrap(args: argparse.Namespace) -> Dict[str, Any]:
     ensure_dirs(run_dir)
 
     learning_curve_path = os.path.join(args.results_dir, f"{run_stem}.dat")
+    step_trace_path = os.path.join(args.results_dir, f"{run_stem}_steps.dat")
     summary_path = os.path.join(run_dir, f"{run_stem}_summary.json")
     final_agent1_path = os.path.join(run_dir, f"{run_stem}_agent1_final.zip")
     final_agent2_path = os.path.join(run_dir, f"{run_stem}_agent2_final.zip")
@@ -269,6 +324,7 @@ def train_bootstrap(args: argparse.Namespace) -> Dict[str, Any]:
         output_path=learning_curve_path,
         round_length=args.round_length,
     )
+    step_logger = StepTraceLogger(output_path=step_trace_path)
 
     use_twin = args.twin_train_steps > 0
     twin_env = None
@@ -353,7 +409,10 @@ def train_bootstrap(args: argparse.Namespace) -> Dict[str, Any]:
 
         if args.real_train_steps > 0:
             agent1.set_env(real_env)
-            real_callback = PhaseStatsCallback(curve_logger=curve_logger)
+            real_callback = PhaseStatsCallback(
+                curve_logger=curve_logger,
+                step_logger=step_logger,
+            )
             print(f"[Iteration {iteration}] Fine-tuning Agent 1 on simulator for {args.real_train_steps} steps")
             agent1.learn(
                 total_timesteps=args.real_train_steps,
@@ -399,6 +458,7 @@ def train_bootstrap(args: argparse.Namespace) -> Dict[str, Any]:
         "config_label": config_label,
         "use_twin": use_twin,
         "learning_curve_path": learning_curve_path,
+        "step_trace_path": step_trace_path,
         "final_agent1_path": final_agent1_path,
         "final_agent2_path": final_agent2_path if use_twin else None,
         "bootstrap_iterations": args.bootstrap_iterations,

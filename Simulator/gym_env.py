@@ -155,6 +155,7 @@ class NetworkSlicingGymContinuous(gym.Env):
     def __init__(self):
         """Initialize continuous action space environment"""
         self.environment = NetworkSlicingEnv(seed=Config.RANDOM_SEED)
+        self.last_obs = None
 
         self.observation_space = gym.spaces.Box(
             low=0.0, 
@@ -189,9 +190,12 @@ class NetworkSlicingGymContinuous(gym.Env):
         
         state = self.environment.reset()
         obs = np.array(state, dtype=np.float32)
+        self.last_obs = obs.copy()
         return obs, {}
 
     def step(self, action):
+        current_obs = None if self.last_obs is None else self.last_obs.copy()
+
         # Normalize action to ensure sum equals 1.0
         action = self._normalize_action_ratio(action)
 
@@ -201,8 +205,11 @@ class NetworkSlicingGymContinuous(gym.Env):
         # Execute step
         obs, rew, term, trunc, info = self.environment.step(action_mhz)
         obs = np.array(obs, dtype=np.float32)
+        self.last_obs = obs.copy()
 
         info = dict(info)
+        info["current_state"] = current_obs
+        info["next_state"] = obs.copy()
         info["applied_action_ratio"] = action.copy()
         info["applied_action_mhz"] = action_mhz.copy()
         
