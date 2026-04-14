@@ -168,7 +168,7 @@ class NullCallback(BaseCallback):
 
 def build_twin_config(args: argparse.Namespace, run_dir: str) -> Dict[str, Any]:
     return {
-        "device": args.device,
+        "device": args.twin_device,
         "artifact_root": os.path.join(run_dir, "twin_versions"),
         "seq_len": args.seq_len,
         "state_dim": 3,
@@ -304,7 +304,7 @@ def train_bootstrap(args: argparse.Namespace) -> Dict[str, Any]:
         real_env,
         verbose=1,
         tensorboard_log=os.path.join(run_dir, "tensorboard"),
-        device=args.device,
+        device=args.ppo_device,
         **DEFAULT_PPO_KWARGS,
     )
     agent2 = None
@@ -314,7 +314,7 @@ def train_bootstrap(args: argparse.Namespace) -> Dict[str, Any]:
             twin_env,
             verbose=1,
             tensorboard_log=os.path.join(run_dir, "tensorboard"),
-            device=args.device,
+            device=args.ppo_device,
             **DEFAULT_PPO_KWARGS,
         )
         copy_policy(agent1, agent2)
@@ -433,7 +433,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Bootstrap PPO with a digital twin.")
     parser.add_argument("--artifact-root", default="artifacts/bootstrap_runs")
     parser.add_argument("--results-dir", default="results")
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--ppo-device", default=None)
+    parser.add_argument("--twin-device", default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--config-shard", choices=sorted(CONFIG_SHARDS.keys()), default="config2")
 
@@ -468,7 +470,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-rollout", action="store_true")
     parser.add_argument("--run-plot", action="store_true")
 
-    return apply_config_shard(parser.parse_args())
+    args = parser.parse_args()
+    if args.ppo_device is None and args.twin_device is None:
+        if args.device is not None:
+            args.ppo_device = args.device
+            args.twin_device = args.device
+        else:
+            args.ppo_device = "cpu"
+            args.twin_device = "cpu"
+    else:
+        if args.ppo_device is None:
+            args.ppo_device = args.device if args.device is not None else "cpu"
+        if args.twin_device is None:
+            args.twin_device = args.device if args.device is not None else "cpu"
+
+    return apply_config_shard(args)
 
 
 if __name__ == "__main__":
