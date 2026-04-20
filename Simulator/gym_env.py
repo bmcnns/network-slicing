@@ -222,9 +222,10 @@ class NetworkSlicingGymContinuous(gym.Env):
         return obs, rew, term, trunc, info
 
 
-class NetworkSlicingGym(gym.Env):    
+class NetworkSlicingGymStarsBars(gym.Env):
     def __init__(self):
         self.environment = NetworkSlicingEnv(seed=Config.RANDOM_SEED)
+        self.last_obs = None
 
         self.observation_space = gym.spaces.Box(
             low=0.0, 
@@ -237,20 +238,38 @@ class NetworkSlicingGym(gym.Env):
         self.action_space_lookup = ActionSpace()
 
     def reset(self, seed=None, options=None):
-        super().reset(seed=Config.RANDOM_SEED)
+        if seed is not None:
+            super().reset(seed=seed)
+
         state = self.environment.reset()
         obs = np.array(state, dtype=np.float32)
+        self.last_obs = obs.copy()
         return obs, {}
 
     def step(self, action):
+        current_obs = None if self.last_obs is None else self.last_obs.copy()
+
         # Lookup bandwidth allocation from action index
         action_units = self.action_space_lookup.lookup_action(action)
-        
+
         # Convert to MHz (each unit = 0.2 MHz)
-        action_mhz = [0.2 * a for a in action_units]
-        
+        action_mhz = np.array([0.2 * a for a in action_units], dtype=np.float32)
+
         # Execute step
         obs, rew, term, trunc, info = self.environment.step(action_mhz)
         obs = np.array(obs, dtype=np.float32)
-        
+        self.last_obs = obs.copy()
+
+        info = dict(info)
+        info["current_state"] = current_obs
+        info["next_state"] = obs.copy()
+        info["action_index"] = int(action)
+        info["applied_action_units"] = np.array(action_units, dtype=np.int32)
+        info["applied_action_mhz"] = action_mhz.copy()
+        info["applied_action_ratio"] = action_mhz / float(action_mhz.sum())
+
         return obs, rew, term, trunc, info
+
+
+# Backward-compatible alias for older code that imports NetworkSlicingGym.
+NetworkSlicingGym = NetworkSlicingGymStarsBars
