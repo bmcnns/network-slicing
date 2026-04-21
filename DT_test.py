@@ -5,7 +5,7 @@ from digital_twin.env import DigitalTwinEnv
 env = DigitalTwinEnv()
 
 env.set_config({
-    "device": "cuda",
+    "device": "cpu",
     "artifact_root": "artifacts/versions",
 
     "seq_len": 64,
@@ -69,5 +69,4 @@ for _ in range(20):
     action, _ = agent.predict(obs, deterministic=True)
     obs, reward, terminated, truncated, info = env.step(action)
     print(obs, reward, action)
-
 

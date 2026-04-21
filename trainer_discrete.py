@@ -30,6 +30,13 @@ DEFAULT_PPO_KWARGS: Dict[str, Any] = {
 }
 
 
+def resolve_device(device: str) -> str:
+    if str(device).startswith("cuda") and not torch.cuda.is_available():
+        print(f"Requested device={device}, but CUDA is unavailable; falling back to CPU.")
+        return "cpu"
+    return device
+
+
 class RoundCurveLogger:
     def __init__(self, output_path: str, round_length: int):
         self.output_path = output_path
@@ -191,6 +198,8 @@ def evaluate_policy_distribution(
 
 
 def train_discrete(args: argparse.Namespace) -> Dict[str, Any]:
+    args.device = resolve_device(args.device)
+
     run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
     run_stem = f"{run_id}_seed{args.seed}_discrete4851"
     run_dir = os.path.join(args.artifact_root, run_id)

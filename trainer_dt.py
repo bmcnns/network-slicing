@@ -29,6 +29,14 @@ DEFAULT_PPO_KWARGS: Dict[str, Any] = {
     "max_grad_norm": 0.5,
 }
 
+
+def resolve_device(device: str) -> str:
+    if str(device).startswith("cuda") and not torch.cuda.is_available():
+        print(f"Requested device={device}, but CUDA is unavailable; falling back to CPU.")
+        return "cpu"
+    return device
+
+
 DEFAULT_ROUND_LENGTH = 400
 DEFAULT_TOTAL_ROUNDS = 30_000
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
@@ -543,6 +551,9 @@ def parse_args() -> argparse.Namespace:
             args.ppo_device = args.device if args.device is not None else "cpu"
         if args.twin_device is None:
             args.twin_device = args.device if args.device is not None else "cpu"
+
+    args.ppo_device = resolve_device(args.ppo_device)
+    args.twin_device = resolve_device(args.twin_device)
 
     return apply_config_shard(args)
 

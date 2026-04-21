@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import torch
 import gymnasium as gym
 import sys
 
@@ -15,7 +14,7 @@ from digital_twin.pipeline import run_collect, run_train, run_rollout, run_plot
 
 MODE = "rollout"  # "collect" | "train" | "rollout" | "plot" | "all"
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = os.environ.get("NETWORK_SLICING_DEVICE", "cpu")
 SEED = 0
 CONFIG_ID = 9 # todo: update before training
 # -------------------------
